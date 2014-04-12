@@ -38,7 +38,7 @@
 #define DEFAULT_CFG_FILE "/etc/ocserv/ocserv.conf"
 
 static const char* pid_file = NULL;
-static const char* cfg_file = DEFAULT_CFG_FILE;
+const char* cfg_file = DEFAULT_CFG_FILE;
 
 struct cfg_options {
 	const char* name;
@@ -244,7 +244,84 @@ unsigned j;
 	}
 }
 
-static void parse_cfg_file(const char* file, struct cfg_st *config)
+/* sanity checks on config */
+static void check_cfg( struct cfg_st *config)
+{
+	if (config->network.ipv4 == NULL && config->network.ipv6 == NULL) {
+		fprintf(stderr, "No ipv4-network or ipv6-network options set.\n");
+		exit(1);
+	}
+
+	if (config->network.ipv4 != NULL && config->network.ipv4_netmask == NULL) {
+		fprintf(stderr, "No mask found for IPv4 network.\n");
+		exit(1);
+	}
+
+	if (config->network.ipv6 != NULL && config->network.ipv6_netmask == NULL) {
+		fprintf(stderr, "No mask found for IPv6 network.\n");
+		exit(1);
+	}
+
+	if (config->banner && strlen(config->banner) > MAX_BANNER_SIZE) {
+		fprintf(stderr, "Banner size is too long\n");
+		exit(1);
+	}
+
+	if (config->cert_size != config->key_size) {
+		fprintf(stderr, "The specified number of keys doesn't match the certificates\n");
+		exit(1);
+	}
+
+	if (config->auth_types & AUTH_TYPE_CERTIFICATE) {
+		if (config->cisco_client_compat == 0)
+			config->cert_req = GNUTLS_CERT_REQUIRE;
+		else
+			config->cert_req = GNUTLS_CERT_REQUEST;
+	}
+
+	if (config->plain_passwd != NULL) {
+		if (access(config->plain_passwd, R_OK) != 0) {
+			fprintf(stderr, "cannot access password file '%s'\n", config->plain_passwd);
+			exit(1);
+		}
+	}
+
+#ifdef ANYCONNECT_CLIENT_COMPAT
+	if (config->cert) {
+		config->cert_hash = calc_sha1_hash(config->cert[0], 1);
+	}
+
+	if (config->xml_config_file) {
+		config->xml_config_hash = calc_sha1_hash(config->xml_config_file, 0);
+		if (config->xml_config_hash == NULL && config->chroot_dir != NULL) {
+			char path[_POSIX_PATH_MAX];
+
+			snprintf(path, sizeof(path), "%s/%s", config->chroot_dir, config->xml_config_file);
+			config->xml_config_hash = calc_sha1_hash(path, 0);
+
+			if (config->xml_config_hash == NULL) {
+				fprintf(stderr, "Cannot open file '%s'\n", path);
+				exit(1);
+			}
+		}
+		if (config->xml_config_hash == NULL) {
+			fprintf(stderr, "Cannot open file '%s'\n", config->xml_config_file);
+			exit(1);
+		}
+	}
+#endif
+
+	if (config->keepalive == 0)
+		config->keepalive = 3600;
+
+	if (config->dpd == 0)
+		config->keepalive = 60;
+
+	if (config->priorities == NULL)
+		config->priorities = "NORMAL:%SERVER_PRECEDENCE:%COMPAT";
+}
+
+void parse_cfg_file(const char* file, struct cfg_st *config)
 {
 tOptionValue const * pov;
 const tOptionValue* val, *prev;
@@ -496,85 +573,10 @@ unsigned force_cert_auth;
 	READ_STRING("config-per-group", config->per_group_dir);
 
 	optionUnloadNested(pov);
+
+	check_cfg(config);
 }
 
-
-/* sanity checks on config */
-static void check_cfg( struct cfg_st *config)
-{
-	if (config->network.ipv4 == NULL && config->network.ipv6 == NULL) {
-		fprintf(stderr, "No ipv4-network or ipv6-network options set.\n");
-		exit(1);
-	}
-
-	if (config->network.ipv4 != NULL && config->network.ipv4_netmask == NULL) {
-		fprintf(stderr, "No mask found for IPv4 network.\n");
-		exit(1);
-	}
-
-	if (config->network.ipv6 != NULL && config->network.ipv6_netmask == NULL) {
-		fprintf(stderr, "No mask found for IPv6 network.\n");
-		exit(1);
-	}
-
-	if (config->banner && strlen(config->banner) > MAX_BANNER_SIZE) {
-		fprintf(stderr, "Banner size is too long\n");
-		exit(1);
-	}
-
-	if (config->cert_size != config->key_size) {
-		fprintf(stderr, "The specified number of keys doesn't match the certificates\n");
-		exit(1);
-	}
-
-	if (config->auth_types & AUTH_TYPE_CERTIFICATE) {
-		if (config->cisco_client_compat == 0)
-			config->cert_req = GNUTLS_CERT_REQUIRE;
-		else
-			config->cert_req = GNUTLS_CERT_REQUEST;
-	}
-
-	if (config->plain_passwd != NULL) {
-		if (access(config->plain_passwd, R_OK) != 0) {
-			fprintf(stderr, "cannot access password file '%s'\n", config->plain_passwd);
-			exit(1);
-		}
-	}
-
-#ifdef ANYCONNECT_CLIENT_COMPAT
-	if (config->cert) {
-		config->cert_hash = calc_sha1_hash(config->cert[0], 1);
-	}
-
-	if (config->xml_config_file) {
-		config->xml_config_hash = calc_sha1_hash(config->xml_config_file, 0);
-		if (config->xml_config_hash == NULL && config->chroot_dir != NULL) {
-			char path[_POSIX_PATH_MAX];
-
-			snprintf(path, sizeof(path), "%s/%s", config->chroot_dir, config->xml_config_file);
-			config->xml_config_hash = calc_sha1_hash(path, 0);
-
-			if (config->xml_config_hash == NULL) {
-				fprintf(stderr, "Cannot open file '%s'\n", path);
-				exit(1);
-			}
-		}
-		if (config->xml_config_hash == NULL) {
-			fprintf(stderr, "Cannot open file '%s'\n", config->xml_config_file);
-			exit(1);
-		}
-	}
-#endif
-
-	if (config->keepalive == 0)
-		config->keepalive = 3600;
-
-	if (config->dpd == 0)
-		config->keepalive = 60;
-
-	if (config->priorities == NULL)
-		config->priorities = "NORMAL:%SERVER_PRECEDENCE:%COMPAT";
-}
 
 int cmd_parser (int argc, char **argv, struct cfg_st* config)
 {
@@ -600,8 +602,6 @@ int cmd_parser (int argc, char **argv, struct cfg_st* config)
 	}
 
 	parse_cfg_file(cfg_file, config);
-
-	check_cfg(config);
 
 	return 0;
 
@@ -676,8 +676,6 @@ void reload_cfg_file(struct cfg_st* config)
 	memset(config, 0, sizeof(*config));
 
 	parse_cfg_file(cfg_file, config);
-
-	check_cfg(config);
 
 	return;
 }

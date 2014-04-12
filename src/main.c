@@ -458,51 +458,51 @@ static void handle_alarm(int signo)
 	need_maintenance = 1;
 }
 
-static void drop_privileges(main_server_st* s)
+static void drop_privileges(struct cfg_st *config)
 {
 	int ret, e;
 	struct rlimit rl;
 
-	if (s->config->chroot_dir) {
-		ret = chdir(s->config->chroot_dir);
+	if (config->chroot_dir) {
+		ret = chdir(config->chroot_dir);
 		if (ret != 0) {
 			e = errno;
-			mslog(s, NULL, LOG_ERR, "cannot chdir to %s: %s", s->config->chroot_dir, strerror(e));
+			syslog(LOG_ERR, "cannot chdir to %s: %s", config->chroot_dir, strerror(e));
 			exit(1);
 		}
 
-		ret = chroot(s->config->chroot_dir);
+		ret = chroot(config->chroot_dir);
 		if (ret != 0) {
 			e = errno;
-			mslog(s, NULL, LOG_ERR, "cannot chroot to %s: %s", s->config->chroot_dir, strerror(e));
+			syslog(LOG_ERR, "cannot chroot to %s: %s", config->chroot_dir, strerror(e));
 			exit(1);
 		}
 	}
 
-	if (s->config->gid != -1 && (getgid() == 0 || getegid() == 0)) {
-		ret = setgid(s->config->gid);
+	if (config->gid != -1 && (getgid() == 0 || getegid() == 0)) {
+		ret = setgid(config->gid);
 		if (ret < 0) {
 			e = errno;
-			mslog(s, NULL, LOG_ERR, "cannot set gid to %d: %s\n",
-			       (int) s->config->gid, strerror(e));
+			syslog(LOG_ERR, "cannot set gid to %d: %s\n",
+			       (int) config->gid, strerror(e));
 			exit(1);
 		}
 		
-		ret = setgroups(1, &s->config->gid);
+		ret = setgroups(1, &config->gid);
 		if (ret < 0) {
 			e = errno;
-			mslog(s, NULL, LOG_ERR, "cannot set groups to %d: %s\n",
-			       (int) s->config->gid, strerror(e));
+			syslog(LOG_ERR, "cannot set groups to %d: %s\n",
+			       (int) config->gid, strerror(e));
 			exit(1);
 		}
 	}
 
-	if (s->config->uid != -1 && (getuid() == 0 || geteuid() == 0)) {
-		ret = setuid(s->config->uid);
+	if (config->uid != -1 && (getuid() == 0 || geteuid() == 0)) {
+		ret = setuid(config->uid);
 		if (ret < 0) {
 			e = errno;
-			mslog(s, NULL, LOG_ERR, "cannot set uid to %d: %s\n",
-			       (int) s->config->uid, strerror(e));
+			syslog(LOG_ERR, "cannot set uid to %d: %s\n",
+			       (int) config->uid, strerror(e));
 			exit(1);
 
 		}
@@ -513,7 +513,7 @@ static void drop_privileges(main_server_st* s)
 	ret = setrlimit(RLIMIT_NPROC, &rl);
 	if (ret < 0) {
 		e = errno;
-		mslog(s, NULL, LOG_ERR, "cannot enforce NPROC limit: %s\n",
+		syslog(LOG_ERR, "cannot enforce NPROC limit: %s\n",
 		       strerror(e));
 	}
 
@@ -523,18 +523,18 @@ static void drop_privileges(main_server_st* s)
 	ret = setrlimit(RLIMIT_FSIZE, &rl);
 	if (ret < 0) {
 		e = errno;
-		mslog(s, NULL, LOG_ERR, "cannot enforce FSIZE limit: %s\n",
+		syslog(LOG_ERR, "cannot enforce FSIZE limit: %s\n",
 		       strerror(e));
 	}
 
 #define MAX_WORKER_MEM (16*1024*1024)
-	if (s->config->debug == 0) {
+	if (config->debug == 0) {
 		rl.rlim_cur = MAX_WORKER_MEM;
 		rl.rlim_max = MAX_WORKER_MEM;
 		ret = setrlimit(RLIMIT_AS, &rl);
 		if (ret < 0) {
 			e = errno;
-			mslog(s, NULL, LOG_ERR, "cannot enforce AS limit: %s\n",
+			syslog(LOG_ERR, "cannot enforce AS limit: %s\n",
 			       strerror(e));
 		}
 	}
@@ -720,7 +720,7 @@ unsigned total = 10;
 	if (reload_conf != 0) {
 		mslog(s, NULL, LOG_INFO, "reloading configuration");
 		reload_cfg_file(s->config);
-		tls_reload_crl(s);
+//		tls_reload_crl(s);
 		reload_conf = 0;
 	}
 
@@ -747,7 +747,7 @@ unsigned total = 10;
 		 * for memory leaks.
 		 */
 		clear_lists(s);
-		tls_global_deinit(s);
+		tls_global_deinit(&s->creds);
 		clear_cfg_file(s->config);
 		closelog();
 		exit(0);
@@ -782,6 +782,69 @@ static int check_tcp_wrapper(int fd)
 # define check_tcp_wrapper(x) 0
 #endif
 
+static int syslog_flags(struct cfg_st *config)
+{
+	int flags = LOG_PID|LOG_NDELAY;
+
+#ifdef LOG_PERROR
+	if (config->debug != 0)
+		flags |= LOG_PERROR;
+#endif
+	return flags;
+}
+
+#define CMD_FD 3
+#define CONN_FD 4
+
+static void run_worker(int argc, char **argv, struct cfg_st *config)
+{
+	struct worker_st ws;
+	struct tls_st creds;
+	int ret, e, flags;
+
+	/* argv[0]: worker
+	 * argv[1]: config file
+	 * argv[2]: sec-mod socket file
+	 * argv[3]: debug level */
+
+	/* descriptors:
+	 * CMD_FD
+	 * CONN_FD
+	 */
+	kill_on_parent_kill(SIGTERM);
+
+	memset(&ws, 0, sizeof(ws));
+	memset(config, 0, sizeof(*config));
+	memset(&creds, 0, sizeof(creds));
+
+	parse_cfg_file(argv[1], config);
+	ws.config = config;
+	config->debug = atoi(argv[3]);
+
+	flags = syslog_flags(config);
+	openlog("ocserv-worker", flags, LOG_DAEMON);
+	syslog_open = 1;
+
+	ws.remote_addr_len = sizeof(ws.remote_addr);
+	ret = getpeername(CONN_FD, (void*)&ws.remote_addr, &ws.remote_addr_len);
+	if (ret < 0) {
+		e = errno;
+		syslog(LOG_WARNING, "cannot obtain peer address: %s", strerror(e));
+	}
+
+	tls_global_init_certs(config, &creds, argv[2]);
+	ws.creds = &creds;
+
+	ws.cmd_fd = CMD_FD;
+	ws.tun_fd = -1;
+	ws.udp_fd = -1;
+	ws.conn_fd = CONN_FD;
+
+	drop_privileges(config);
+
+	vpn_server(&ws);
+}
+
 int main(int argc, char** argv)
 {
 	int fd, pid, e;
@@ -803,6 +866,20 @@ int main(int argc, char** argv)
 	sigset_t emptyset, blockset;
 
 	memset(&s, 0, sizeof(s));
+
+	/* Initialize GnuTLS */
+	tls_global_init();
+
+	if (argc == 4 && strcmp(argv[0], "ocserv-worker") == 0) {
+		run_worker(argc, argv, &config);
+		exit(0);
+	}
+
+	s.exe = current_process_exe();
+	if (s.exe == NULL) {
+		fprintf(stderr, "Couldn't determine the process executable on your platform; report the issue to openconnect list\n");
+		exit(1);
+	}
 
 	list_head_init(&s.proc_list.head);
 	list_head_init(&s.ban_list.head);
@@ -826,9 +903,6 @@ int main(int argc, char** argv)
 	ocsignal(SIGCHLD, handle_children);
 	ocsignal(SIGALRM, handle_alarm);
 
-	/* Initialize GnuTLS */
-	tls_global_init(&s);
-	
 	ret = gnutls_rnd(GNUTLS_RND_RANDOM, s.cookie_key, sizeof(s.cookie_key));
 	if (ret < 0) {
 		fprintf(stderr, "Error in cookie key generation\n");
@@ -860,11 +934,7 @@ int main(int argc, char** argv)
 		exit(1);
 	}
 
-	flags = LOG_PID|LOG_NDELAY;
-#ifdef LOG_PERROR
-	if (config.debug != 0)
-		flags |= LOG_PERROR;
-#endif
+	flags = syslog_flags(&config);
 	openlog("ocserv", flags, LOG_DAEMON);
 	syslog_open = 1;
 #ifdef HAVE_LIBWRAP
@@ -885,7 +955,7 @@ int main(int argc, char** argv)
 	run_sec_mod(&s);
 
 	/* Initialize certificates */
-	tls_global_init_certs(&s);
+//	tls_global_init_certs(&config, &s.creds);
 
 	mslog(&s, NULL, LOG_INFO, "initialized %s", PACKAGE_STRING);
 
@@ -955,16 +1025,13 @@ int main(int argc, char** argv)
 			set = FD_ISSET(ltmp->fd, &rd_set);
 			if (set && ltmp->socktype == SOCK_STREAM) {
 				/* connection on TCP port */
-				memset(&ws, 0, sizeof(ws));
-
-				ws.remote_addr_len = sizeof(ws.remote_addr);
-				fd = accept(ltmp->fd, (void*)&ws.remote_addr, &ws.remote_addr_len);
+				ctmp->remote_addr_len = sizeof(ctmp->remote_addr);
+				fd = accept(ltmp->fd, (void*)&ctmp->remote_addr, &ctmp->remote_addr_len);
 				if (fd < 0) {
 					mslog(&s, NULL, LOG_ERR,
 					       "Error in accept(): %s", strerror(errno));
 					continue;
 				}
-				set_cloexec_flag (fd, 1);
 
 				ret = gnutls_rnd(GNUTLS_RND_RANDOM, ws.sid, sizeof(ws.sid));
 				if (ret < 0) {
@@ -1004,27 +1071,21 @@ int main(int argc, char** argv)
 
 				pid = fork();
 				if (pid == 0) {	/* child */
-					/* close any open descriptors, and erase
-					 * sensitive data before running the worker
+					char debugl[8];
+					/* close any open descriptors that don't have close-on-exec set
 					 */
 					close(cmd_fd[0]);
-					clear_lists(&s);
-
-					setproctitle(PACKAGE_NAME"-worker");
-					kill_on_parent_kill(SIGTERM);
-					
-					ws.config = &config;
-					ws.cmd_fd = cmd_fd[1];
-					ws.tun_fd = -1;
-					ws.udp_fd = -1;
-					ws.conn_fd = fd;
-					ws.creds = &s.creds;
 
 					/* Drop privileges after this point */
 					sigprocmask(SIG_UNBLOCK, &blockset, NULL);
-					drop_privileges(&s);
 
-					vpn_server(&ws);
+					if (dup2(cmd_fd[1], CMD_FD) == -1)
+						exit(1);
+					if (dup2(fd, CONN_FD) == -1)
+						exit(1);
+
+					snprintf(debugl, sizeof(debugl), "%u", config.debug);
+					execl(s.exe, "ocserv-worker", cfg_file, s.socket_file, debugl, NULL);
 					exit(0);
 				} else if (pid == -1) {
 fork_failed:
@@ -1036,9 +1097,6 @@ fork_failed:
 						kill(pid, SIGTERM);
 						goto fork_failed;
 					}
-					memcpy(&ctmp->remote_addr, &ws.remote_addr, ws.remote_addr_len);
-					ctmp->remote_addr_len = ws.remote_addr_len;
-					memcpy(&ctmp->sid, &ws.sid, sizeof(ws.sid));
 
 					ctmp->pid = pid;
 					ctmp->tun_lease.fd = -1;

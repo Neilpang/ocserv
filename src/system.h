@@ -39,4 +39,6 @@ void kill_on_parent_kill(int sig);
 
 SIGHANDLER_T ocsignal(int signum, SIGHANDLER_T handler);
 
+const char *current_process_exe(void);
+
 #endif

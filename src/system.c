@@ -21,6 +21,18 @@
 #include <unistd.h>
 #ifdef __linux__
 # include <sys/prctl.h>
+# define SELF_FILE "/proc/self/exe"
+#endif
+
+#if defined(__FreeBSD__)
+# define SELF_FILE "/proc/curproc/file"
+#endif
+
+#include <limits.h>
+
+#if defined(__APPLE__)
+# include <errno.h>
+# include <libproc.h>
 #endif
 
 void kill_on_parent_kill(int sig)
@@ -40,4 +52,27 @@ SIGHANDLER_T ocsignal(int signum, SIGHANDLER_T handler)
 	
 	sigaction (signum, &new_action, &old_action);
 	return old_action.sa_handler;
+}
+
+const char *current_process_exe(void)
+{
+	static char path[_POSIX_PATH_MAX];
+	int len;
+#if defined(SELF_FILE)
+	len = readlink(SELF_FILE, path, sizeof(path)-1);
+	if (len <= 0)
+		return NULL;
+	path[len] = 0;
+	return path;
+#elif defined(__APPLE__) /* OSX */
+	pid_t pid; 
+
+	pid = getpid();
+	len = proc_pidpath (pid, path, sizeof(path));
+	if (len <= 0)
+		return NULL;
+	return pathbuf;
+#else
+	return NULL;
+#endif
 }

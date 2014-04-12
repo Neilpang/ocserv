@@ -41,11 +41,6 @@ ssize_t tls_send_nb(gnutls_session_t session, const void *data,
 void tls_cork(gnutls_session_t session);
 int tls_uncork(gnutls_session_t session);
 
-void tls_reload_crl(struct main_server_st* s);
-void tls_global_init(struct main_server_st* s);
-void tls_global_deinit(struct main_server_st* s);
-void tls_global_init_certs(struct main_server_st* s);
-
 ssize_t tls_send_file(gnutls_session_t session, const char *file);
 size_t tls_get_overhead(gnutls_protocol_t, gnutls_cipher_algorithm_t, gnutls_mac_algorithm_t);
 
@@ -83,6 +78,12 @@ struct tls_st {
 	gnutls_priority_t cprio;
 	gnutls_dh_params_t dh_params;
 };
+
+void tls_global_init_certs(struct cfg_st *config, struct tls_st *creds, const char *socket_file);
+void tls_reload_crl(struct cfg_st *config, struct tls_st *creds);
+
+void tls_global_init(void);
+void tls_global_deinit(struct tls_st *creds);
 
 typedef struct
 {

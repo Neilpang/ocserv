@@ -292,7 +292,7 @@ fail:
 
 }
 
-void tls_global_init(main_server_st* s)
+void tls_global_init(void)
 {
 int ret;
 
@@ -304,12 +304,12 @@ int ret;
 	return;
 }
 
-void tls_global_deinit(main_server_st* s)
+void tls_global_deinit(struct tls_st *creds)
 {
-	if (s->creds.xcred != NULL)
-		gnutls_certificate_free_credentials(s->creds.xcred);
-	if (s->creds.cprio != NULL)
-		gnutls_priority_deinit(s->creds.cprio);
+	if (creds->xcred != NULL)
+		gnutls_certificate_free_credentials(creds->xcred);
+	if (creds->cprio != NULL)
+		gnutls_priority_deinit(creds->cprio);
 
 	gnutls_global_deinit();
 
@@ -318,19 +318,19 @@ void tls_global_deinit(main_server_st* s)
 
 /* Checks, if there is a single certificate specified, whether it
  * is compatible with all ciphersuites */
-static void certificate_check(main_server_st *s)
+static void certificate_check(struct cfg_st *config, struct tls_st *creds)
 {
 gnutls_datum_t data = {NULL, 0};
 gnutls_x509_crt_t crt = NULL;
 int ret;
 unsigned usage;
 
-	if (s->config->cert_size > 1)
+	if (config->cert_size > 1)
 		return;
 
-	if (gnutls_url_is_supported(s->config->cert[0]) == 0) {
+	if (gnutls_url_is_supported(config->cert[0]) == 0) {
 		/* no URL */
-		ret = gnutls_load_file(s->config->cert[0], &data);
+		ret = gnutls_load_file(config->cert[0], &data);
 		if (ret < 0)
 			return;
 
@@ -347,10 +347,10 @@ unsigned usage;
 		ret = gnutls_x509_crt_get_key_usage(crt, &usage, NULL);
 		if (ret >= 0) {
 			if (!(usage & GNUTLS_KEY_KEY_ENCIPHERMENT)) {
-				mslog(s, NULL, LOG_WARNING, "server certificate key usage prevents key encipherment; unable to support the RSA ciphersuites; "
+				syslog(LOG_WARNING, "server certificate key usage prevents key encipherment; unable to support the RSA ciphersuites; "
 					"if that is not intentional, regenerate the server certificate with the key usage flag 'key encipherment' set.");
-				if (s->config->dh_params_file != NULL)
-					mslog(s, NULL, LOG_WARNING, "no DH-params file specified; server will be limited to ECDHE ciphersuites\n");
+				if (config->dh_params_file != NULL)
+					syslog(LOG_WARNING, "no DH-params file specified; server will be limited to ECDHE ciphersuites\n");
 			}
 		}
 	}
@@ -362,24 +362,24 @@ cleanup:
 	return;
 }
 
-static void set_dh_params(main_server_st* s, gnutls_certificate_credentials_t cred)
+static void set_dh_params(struct cfg_st *config, struct tls_st *creds)
 {
 gnutls_datum_t data;
 int ret;
 
-	if (s->config->dh_params_file != NULL) {
-		ret = gnutls_dh_params_init (&s->creds.dh_params);
+	if (config->dh_params_file != NULL) {
+		ret = gnutls_dh_params_init (&creds->dh_params);
 		GNUTLS_FATAL_ERR(ret);
 
-		ret = gnutls_load_file(s->config->dh_params_file, &data);
+		ret = gnutls_load_file(config->dh_params_file, &data);
 		GNUTLS_FATAL_ERR(ret);
 
-		ret = gnutls_dh_params_import_pkcs3(s->creds.dh_params, &data, GNUTLS_X509_FMT_PEM);
+		ret = gnutls_dh_params_import_pkcs3(creds->dh_params, &data, GNUTLS_X509_FMT_PEM);
 		GNUTLS_FATAL_ERR(ret);
 
 		gnutls_free(data.data);
 
-		gnutls_certificate_set_dh_params(cred, s->creds.dh_params);
+		gnutls_certificate_set_dh_params(creds->xcred, creds->dh_params);
 	}
 }
 
@@ -483,7 +483,7 @@ static void key_cb_deinit_func(gnutls_privkey_t key, void* userdata)
 }
 
 static
-int load_key_files(main_server_st *s)
+int load_key_files(struct cfg_st *config, struct tls_st *creds, const char *socket_file)
 {
 int ret;
 gnutls_pcert_st *pcert_list;
@@ -492,22 +492,22 @@ gnutls_privkey_t key;
 gnutls_datum_t data;
 struct key_cb_data * cdata;
 
-	for (i=0;i<s->config->key_size;i++) {
+	for (i=0;i<config->key_size;i++) {
 		/* load the certificate */
-		if (gnutls_url_is_supported(s->config->cert[i]) != 0) {
-			mslog(s, NULL, LOG_ERR, "Loading a certificate from '%s' is unsupported", s->config->cert[i]);
+		if (gnutls_url_is_supported(config->cert[i]) != 0) {
+			syslog(LOG_ERR, "Loading a certificate from '%s' is unsupported", config->cert[i]);
 			return -1;
 		} else {
-			ret = gnutls_load_file(s->config->cert[i], &data);
+			ret = gnutls_load_file(config->cert[i], &data);
 			if (ret < 0) {
-				mslog(s, NULL, LOG_ERR, "error loading file '%s'", s->config->cert[i]);
+				syslog(LOG_ERR, "error loading file '%s'", config->cert[i]);
 				return -1;
 			}
 
 			pcert_list_size = 8;
 			pcert_list = gnutls_malloc(sizeof(pcert_list[0])*pcert_list_size);
 			if (pcert_list == NULL) {
-				mslog(s, NULL, LOG_ERR, "error allocating memory");
+				syslog(LOG_ERR, "error allocating memory");
 				return -1;
 			}
 
@@ -523,7 +523,7 @@ struct key_cb_data * cdata;
 
 		cdata = malloc(sizeof(*cdata));
 		if (cdata == NULL) {
-			mslog(s, NULL, LOG_ERR, "error allocating memory");
+			syslog(LOG_ERR, "error allocating memory");
 			return -1;
 		}
 
@@ -531,7 +531,7 @@ struct key_cb_data * cdata;
 
 		memset(&cdata->sa, 0, sizeof(cdata->sa));
 		cdata->sa.sun_family = AF_UNIX;
-		snprintf(cdata->sa.sun_path, sizeof(cdata->sa.sun_path), "%s", s->socket_file);
+		snprintf(cdata->sa.sun_path, sizeof(cdata->sa.sun_path), "%s", socket_file);
 		cdata->sa_len = SUN_LEN(&cdata->sa);
 
 		/* load the private key */
@@ -540,7 +540,7 @@ struct key_cb_data * cdata;
 			key_cb_deinit_func, GNUTLS_PRIVKEY_IMPORT_AUTO_RELEASE);
 		GNUTLS_FATAL_ERR(ret);
 
-		ret = gnutls_certificate_set_key(s->creds.xcred, NULL, 0, pcert_list,
+		ret = gnutls_certificate_set_key(creds->xcred, NULL, 0, pcert_list,
 				pcert_list_size, key);
 		GNUTLS_FATAL_ERR(ret);
 	}
@@ -549,61 +549,61 @@ struct key_cb_data * cdata;
 }
 
 /* reload key files etc. */
-void tls_global_init_certs(main_server_st* s)
+void tls_global_init_certs(struct cfg_st *config, struct tls_st *creds, const char *socket_file)
 {
 int ret;
 const char* perr;
 
-	if (s->config->debug >= DEBUG_TLS) {
+	if (config->debug >= DEBUG_TLS) {
 		gnutls_global_set_log_function(tls_log_func);
 		gnutls_global_set_log_level(9);
 	}
 
-	if (s->creds.xcred != NULL)
-		gnutls_certificate_free_credentials(s->creds.xcred);
+	if (creds->xcred != NULL)
+		gnutls_certificate_free_credentials(creds->xcred);
 
-	ret = gnutls_certificate_allocate_credentials(&s->creds.xcred);
+	ret = gnutls_certificate_allocate_credentials(&creds->xcred);
 	GNUTLS_FATAL_ERR(ret);
 
-	set_dh_params(s, s->creds.xcred);
+	set_dh_params(config, creds);
 
-	if (s->config->key_size == 0 || s->config->cert_size == 0) {
-		mslog(s, NULL, LOG_ERR, "no certificate or key files were specified"); 
+	if (config->key_size == 0 || config->cert_size == 0) {
+		syslog(LOG_ERR, "no certificate or key files were specified"); 
 		exit(1);
 	}
 
-	certificate_check(s);
+	certificate_check(config, creds);
 
-	ret = load_key_files(s);
+	ret = load_key_files(config, creds, socket_file);
 	if (ret < 0) {
-		mslog(s, NULL, LOG_ERR, "error loading the certificate or key file");
+		syslog(LOG_ERR, "error loading the certificate or key file");
 		exit(1);
 	}
 
-	if (s->config->cert_req != GNUTLS_CERT_IGNORE) {
-		if (s->config->ca != NULL) {
+	if (config->cert_req != GNUTLS_CERT_IGNORE) {
+		if (config->ca != NULL) {
 			ret =
-			    gnutls_certificate_set_x509_trust_file(s->creds.xcred,
-								   s->config->ca,
+			    gnutls_certificate_set_x509_trust_file(creds->xcred,
+								   config->ca,
 								   GNUTLS_X509_FMT_PEM);
 			if (ret < 0) {
-				mslog(s, NULL, LOG_ERR, "error setting the CA (%s) file",
-					s->config->ca);
+				syslog(LOG_ERR, "error setting the CA (%s) file",
+					config->ca);
 				exit(1);
 			}
 
-			mslog(s, NULL, LOG_INFO, "processed %d CA certificate(s)", ret);
+			syslog(LOG_INFO, "processed %d CA certificate(s)", ret);
 		}
 
-		tls_reload_crl(s);
+		tls_reload_crl(config, creds);
 
-		gnutls_certificate_set_verify_function(s->creds.xcred,
+		gnutls_certificate_set_verify_function(creds->xcred,
 						       verify_certificate_cb);
 	}
 
 	ret = gnutls_priority_init(&s->creds.cprio, s->config->priorities, &perr);
 	if (ret == GNUTLS_E_PARSING_ERROR)
-		mslog(s, NULL, LOG_ERR, "error in TLS priority string: %s", perr);
+		syslog(LOG_ERR, "error in TLS priority string: %s", perr);
 	GNUTLS_FATAL_ERR(ret);
 
 	if (s->config->ocsp_response != NULL) {
@@ -615,23 +615,23 @@ const char* perr;
 	return;
 }
 
-void tls_reload_crl(main_server_st* s)
+void tls_reload_crl(struct cfg_st *config, struct tls_st *creds)
 {
 int ret;
 
-	if (s->config->cert_req != GNUTLS_CERT_IGNORE && s->config->crl != NULL) {
+	if (config->cert_req != GNUTLS_CERT_IGNORE && config->crl != NULL) {
 		ret =
-		    gnutls_certificate_set_x509_crl_file(s->creds.xcred,
-							 s->config->crl,
+		    gnutls_certificate_set_x509_crl_file(creds->xcred,
+							 config->crl,
 							 GNUTLS_X509_FMT_PEM);
 		if (ret < 0) {
 			/* ignore the CRL file when empty */
 			if (ret == GNUTLS_E_BASE64_DECODING_ERROR) {
-				mslog(s, NULL, LOG_ERR, "empty or unreadable CRL file (%s); check documentation to generate an empty CRL",
-					s->config->crl);
+				syslog(LOG_ERR, "empty or unreadable CRL file (%s); check documentation to generate an empty CRL",
+					config->crl);
 			} else {
-				mslog(s, NULL, LOG_ERR, "error reading the CRL (%s) file: %s",
-					s->config->crl, gnutls_strerror(ret));
+				syslog(LOG_ERR, "error reading the CRL (%s) file: %s",
+					config->crl, gnutls_strerror(ret));
 			}
 			exit(1);
 		}

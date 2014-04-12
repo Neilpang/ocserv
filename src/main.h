@@ -31,8 +31,11 @@
 #include <cookies.h>
 #include <common.h>
 
+extern const char* cfg_file;
+
 int cmd_parser (int argc, char **argv, struct cfg_st* config);
 void reload_cfg_file(struct cfg_st* config);
+void parse_cfg_file(const char* file, struct cfg_st *config);
 void clear_cfg_file(struct cfg_st* config);
 void write_pid_file(void);
 void remove_pid_file(void);
@@ -174,6 +177,7 @@ struct ctl_list_st {
 };
 
 typedef struct main_server_st {
+	const char *exe; /* the name of ocserv's executable */
 	struct cfg_st *config;
 	
 	struct ip_lease_db_st ip_leases;
