@@ -901,7 +901,6 @@ static void run_worker(int argc, char **argv)
 
 	tls_global_init_certs(ws.config, &creds, argv[3]);
 	ws.creds = &creds;
-
 	ws.cmd_fd = CMD_FD;
 	ws.tun_fd = -1;
 	ws.udp_fd = -1;
@@ -1109,7 +1108,6 @@ int main(int argc, char** argv)
 					continue;
 				}
 
-
 				/* Check if the client is on the banned list */
 				ret = check_if_banned(&s, &ctmp->remote_addr, ctmp->remote_addr_len);
 				if (ret < 0) {
@@ -1151,10 +1149,16 @@ int main(int argc, char** argv)
 
 					if (dup2(s.shm_fd, SHM_FD) == -1)
 						exit(1);
+					if (s.shm_fd != SHM_FD)
+						close(s.shm_fd);
 					if (dup2(cmd_fd[1], CMD_FD) == -1)
 						exit(1);
+					if (cmd_fd[1] != CMD_FD)
+						close(cmd_fd[1]);
 					if (dup2(fd, CONN_FD) == -1)
 						exit(1);
+					if (fd != CONN_FD)
+						close(fd);
 
 					snprintf(debugl, sizeof(debugl), "%u", config.debug);
 					execl(s.exe, "ocserv-worker", "worker", cfg_file, s.socket_file, debugl, NULL);
