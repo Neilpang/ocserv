@@ -79,8 +79,8 @@ struct tls_st {
 	gnutls_dh_params_t dh_params;
 };
 
-void tls_global_init_certs(struct cfg_st *config, struct tls_st *creds, const char *socket_file);
-void tls_reload_crl(struct cfg_st *config, struct tls_st *creds);
+void tls_global_init_certs(cfg_st *config, struct tls_st *creds, const char *socket_file);
+void tls_reload_crl(cfg_st *config, struct tls_st *creds);
 
 void tls_global_init(void);
 void tls_global_deinit(struct tls_st *creds);

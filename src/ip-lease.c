@@ -120,8 +120,8 @@ int get_ipv4_lease(main_server_st* s, struct proc_st* proc)
 		c_network = proc->config.ipv4_network;
 		c_netmask = proc->config.ipv4_netmask;
 	} else {
-		c_network = s->config->network.ipv4;
-		c_netmask = s->config->network.ipv4_netmask;
+		c_network = s->config->network->ipv4;
+		c_netmask = s->config->network->ipv4_netmask;
 	}
 
 	if (c_network && c_netmask) {
@@ -256,8 +256,8 @@ int get_ipv6_lease(main_server_st* s, struct proc_st* proc)
 		c_network = proc->config.ipv6_network;
 		c_netmask = proc->config.ipv6_netmask;
 	} else {
-		c_network = s->config->network.ipv6;
-		c_netmask = s->config->network.ipv6_netmask;
+		c_network = s->config->network->ipv6;
+		c_netmask = s->config->network->ipv6_netmask;
 	}
 
 	if (c_network && c_netmask) {

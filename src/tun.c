@@ -283,7 +283,7 @@ int open_tun(main_server_st * s, struct proc_st *proc)
 	if (ret < 0)
 		return ret;
 	snprintf(proc->tun_lease.name, sizeof(proc->tun_lease.name), "%s%%d",
-		 s->config->network.name);
+		 s->config->network->name);
 
 	/* No need to free the lease after this point.
 	 */

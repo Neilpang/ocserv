@@ -7,7 +7,8 @@ AM_CPPFLAGS = -I$(srcdir)/../gl/ -I$(builddir)/../gl/ \
 	$(LIBNL3_CFLAGS) $(LIBREADLINE_CFLAGS)
 
 BUILT_SOURCES = ocpasswd-args.c ocpasswd-args.h \
-	ocserv-args.c ocserv-args.h ipc.pb-c.c ipc.pb-c.h
+	ocserv-args.c ocserv-args.h ipc.pb-c.c ipc.pb-c.h \
+	config.pb-c.h config.pb-c.c
 
 if LOCAL_HTTP_PARSER
 AM_CPPFLAGS += -I$(srcdir)/http-parser/
@@ -25,7 +26,7 @@ endif
 
 EXTRA_DIST = ccan/licenses/BSD-MIT version.inc.in \
 	ccan/licenses/CC0 ccan/licenses/LGPL-2.1 version.inc \
-	occtl-args.def ipc.proto
+	occtl-args.def ipc.proto config.proto
 
 bin_PROGRAMS = ocpasswd
 if ENABLE_OCCTL
@@ -58,7 +59,7 @@ ocserv_SOURCES = main.c main-auth.c worker-vpn.c worker-auth.c tlslib.c \
 	worker-bandwidth.c worker-bandwidth.h \
 	str.c str.h gettime.h $(CCAN_SOURCES) $(HTTP_PARSER_SOURCES)
 
-ocserv_SOURCES += ipc.pb-c.h ipc.pb-c.c
+ocserv_SOURCES += ipc.pb-c.h ipc.pb-c.c config.pb-c.h config.pb-c.c
 
 if LOCAL_PROTOBUF_C
 ocserv_SOURCES += protobuf/google/protobuf-c/protobuf-c.h protobuf/google/protobuf-c/protobuf-c.c
@@ -98,3 +99,8 @@ ipc.pb-c.c: ipc.proto
 	protoc-c --c_out=. $<
 
 ipc.pb-c.h: ipc.pb-c.c
+
+config.pb-c.c: config.proto
+	protoc-c --c_out=. $<
+
+config.pb-c.h: config.pb-c.c

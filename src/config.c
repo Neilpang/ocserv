@@ -168,15 +168,6 @@ unsigned j;
 		exit(1); \
 	}
 
-#define READ_STATIC_STRING(name, s_name) \
-	val = get_option(name, &mand); \
-	if (val != NULL && val->valType == OPARG_TYPE_STRING) \
-		snprintf(s_name, sizeof(s_name), "%s", val->v.strVal); \
-	else if (mand != 0) { \
-		fprintf(stderr, "Configuration option %s is mandatory.\n", name); \
-		exit(1); \
-	}
-
 #define READ_TF(name, s_name, def) \
 	{ char* tmp_tf = NULL; \
 		READ_STRING(name, tmp_tf); \
@@ -245,19 +236,19 @@ unsigned j;
 }
 
 /* sanity checks on config */
-static void check_cfg( struct cfg_st *config)
+static void check_cfg( cfg_st *config)
 {
-	if (config->network.ipv4 == NULL && config->network.ipv6 == NULL) {
+	if (config->network->ipv4 == NULL && config->network->ipv6 == NULL) {
 		fprintf(stderr, "No ipv4-network or ipv6-network options set.\n");
 		exit(1);
 	}
 
-	if (config->network.ipv4 != NULL && config->network.ipv4_netmask == NULL) {
+	if (config->network->ipv4 != NULL && config->network->ipv4_netmask == NULL) {
 		fprintf(stderr, "No mask found for IPv4 network.\n");
 		exit(1);
 	}
 
-	if (config->network.ipv6 != NULL && config->network.ipv6_netmask == NULL) {
+	if (config->network->ipv6 != NULL && config->network->ipv6_netmask == NULL) {
 		fprintf(stderr, "No mask found for IPv6 network.\n");
 		exit(1);
 	}
@@ -267,7 +258,7 @@ static void check_cfg( struct cfg_st *config)
 		exit(1);
 	}
 
-	if (config->cert_size != config->key_size) {
+	if (config->n_cert != config->n_key) {
 		fprintf(stderr, "The specified number of keys doesn't match the certificates\n");
 		exit(1);
 	}
@@ -321,7 +312,7 @@ static void check_cfg( struct cfg_st *config)
 		config->priorities = "NORMAL:%SERVER_PRECEDENCE:%COMPAT";
 }
 
-void parse_cfg_file(const char* file, struct cfg_st *config)
+static void parse_cfg_file(const char* file, cfg_st *config)
 {
 tOptionValue const * pov;
 const tOptionValue* val, *prev;
@@ -414,8 +405,8 @@ unsigned force_cert_auth;
 	READ_NUMERIC("rate-limit-ms", config->rate_limit_ms);
 
 	READ_STRING("ocsp-response", config->ocsp_response);
-	READ_MULTI_LINE("server-cert", config->cert, config->cert_size);
-	READ_MULTI_LINE("server-key", config->key, config->key_size);
+	READ_MULTI_LINE("server-cert", config->cert, config->n_cert);
+	READ_MULTI_LINE("server-key", config->key, config->n_key);
 	READ_STRING("dh-params", config->dh_params_file);
 	READ_STRING("pin-file", config->pin_file);
 	READ_STRING("srk-pin-file", config->srk_pin_file);
@@ -516,55 +507,55 @@ unsigned force_cert_auth;
 		config->gid = grp->gr_gid;
 	}
 
-	READ_STATIC_STRING("device", config->network.name);
+	READ_STRING("device", config->network->name);
 	READ_STRING("cgroup", config->cgroup);
 
-	READ_STRING("ipv4-network", config->network.ipv4);
-	READ_STRING("ipv4-netmask", config->network.ipv4_netmask);
+	READ_STRING("ipv4-network", config->network->ipv4);
+	READ_STRING("ipv4-netmask", config->network->ipv4_netmask);
 
-	READ_STRING("ipv6-network", config->network.ipv6);
+	READ_STRING("ipv6-network", config->network->ipv6);
 
 	READ_NUMERIC("ipv6-prefix", prefix);
 	if (prefix > 0) {
-		config->network.ipv6_netmask = ipv6_prefix_to_mask(prefix);
-		config->network.ipv6_prefix = prefix;
+		config->network->ipv6_netmask = ipv6_prefix_to_mask(prefix);
+		config->network->ipv6_prefix = prefix;
 
-		if (config->network.ipv6_netmask == NULL) {
+		if (config->network->ipv6_netmask == NULL) {
 			fprintf(stderr, "invalid IPv6 prefix: %u\n", prefix);
 			exit(1);
 		}
 	}
 
-	READ_MULTI_LINE("custom-header", config->custom_header, config->custom_header_size);
-	READ_MULTI_LINE("split-dns", config->split_dns, config->split_dns_size);
+	READ_MULTI_LINE("custom-header", config->custom_header, config->n_custom_header);
+	READ_MULTI_LINE("split-dns", config->split_dns, config->n_split_dns);
 
-	READ_MULTI_LINE("route", config->network.routes, config->network.routes_size);
-	for (j=0;j<config->network.routes_size;j++) {
-		if (strstr(config->network.routes[j], "0.0.0.0/0") != 0) {
+	READ_MULTI_LINE("route", config->network->routes, config->network->n_routes);
+	for (j=0;j<config->network->n_routes;j++) {
+		if (strstr(config->network->routes[j], "0.0.0.0/0") != 0) {
 			fprintf(stderr, "Illegal route '%s' detected; to set a default route remove all route directives\n",
-				config->network.routes[j]);
+				config->network->routes[j]);
 			exit(1);
 		}
 	}
-	READ_MULTI_LINE("dns", config->network.dns, config->network.dns_size);
-	if (config->network.dns_size == 0) {
+	READ_MULTI_LINE("dns", config->network->dns, config->network->n_dns);
+	if (config->network->n_dns == 0) {
 		/* try the aliases */
-		READ_MULTI_LINE("ipv6-dns", config->network.dns, config->network.dns_size);
-		READ_MULTI_LINE("ipv4-dns", config->network.dns, config->network.dns_size);
+		READ_MULTI_LINE("ipv6-dns", config->network->dns, config->network->n_dns);
+		READ_MULTI_LINE("ipv4-dns", config->network->dns, config->network->n_dns);
 	}
 
-	for (j=0;j<config->network.dns_size;j++) {
-		if (strcmp(config->network.dns[j], "local") == 0) {
+	for (j=0;j<config->network->n_dns;j++) {
+		if (strcmp(config->network->dns[j], "local") == 0) {
 			fprintf(stderr, "The 'local' DNS keyword is no longer supported.\n");
 			exit(1);
 		}
 	}
 
-	READ_MULTI_LINE("nbns", config->network.nbns, config->network.nbns_size);
-	if (config->network.nbns_size == 0) {
+	READ_MULTI_LINE("nbns", config->network->nbns, config->network->n_nbns);
+	if (config->network->n_nbns == 0) {
 		/* try the aliases */
-		READ_MULTI_LINE("ipv6-nbns", config->network.nbns, config->network.nbns_size);
-		READ_MULTI_LINE("ipv4-nbns", config->network.nbns, config->network.nbns_size);
+		READ_MULTI_LINE("ipv6-nbns", config->network->nbns, config->network->n_nbns);
+		READ_MULTI_LINE("ipv4-nbns", config->network->nbns, config->network->n_nbns);
 	}
 
 	READ_STRING("route-add-cmd", config->route_add_cmd);
@@ -578,10 +569,16 @@ unsigned force_cert_auth;
 }
 
 
-int cmd_parser (int argc, char **argv, struct cfg_st* config)
+int cmd_parser (int argc, char **argv, cfg_st* config)
 {
 
 	memset(config, 0, sizeof(*config));
+
+	config->network = calloc(1, sizeof(*(config->network)));
+	if (config->network == NULL) {
+		fprintf(stderr, "memory error\n");
+		exit(1);
+	}
 
 	optionProcess( &ocservOptions, argc, argv);
   
@@ -604,11 +601,28 @@ int cmd_parser (int argc, char **argv, struct cfg_st* config)
 	parse_cfg_file(cfg_file, config);
 
 	return 0;
+}
 
+void worker_cmd_parser (const char *debug, const char *cfg_file, cfg_st* config)
+{
+
+	memset(config, 0, sizeof(*config));
+
+	config->network = calloc(1, sizeof(*(config->network)));
+	if (config->network == NULL) {
+		syslog(LOG_ERR, "memory error\n");
+		exit(1);
+	}
+
+	config->debug = atoi(debug);
+
+	parse_cfg_file(cfg_file, config);
+
+	return;
 }
 
 #define DEL(x) {free(x);x=NULL;}
-void clear_cfg_file(struct cfg_st* config)
+void clear_cfg_file(cfg_st* config)
 {
 unsigned i;
 
@@ -640,40 +654,45 @@ unsigned i;
 	DEL(config->connect_script);
 	DEL(config->disconnect_script);
 
-	DEL(config->network.ipv4);
-	DEL(config->network.ipv4_netmask);
-	DEL(config->network.ipv6);
-	DEL(config->network.ipv6_netmask);
-	for (i=0;i<config->network.routes_size;i++)
-		DEL(config->network.routes[i]);
-	DEL(config->network.routes);
-	for (i=0;i<config->network.dns_size;i++)
-		DEL(config->network.dns[i]);
-	DEL(config->network.dns);
-	for (i=0;i<config->network.nbns_size;i++)
-		DEL(config->network.nbns[i]);
-	DEL(config->network.nbns);
-	for (i=0;i<config->key_size;i++)
+	DEL(config->network->ipv4);
+	DEL(config->network->ipv4_netmask);
+	DEL(config->network->ipv6);
+	DEL(config->network->ipv6_netmask);
+	for (i=0;i<config->network->n_routes;i++)
+		DEL(config->network->routes[i]);
+	DEL(config->network->routes);
+	for (i=0;i<config->network->n_dns;i++)
+		DEL(config->network->dns[i]);
+	DEL(config->network->dns);
+	for (i=0;i<config->network->n_nbns;i++)
+		DEL(config->network->nbns[i]);
+	DEL(config->network->nbns);
+	for (i=0;i<config->n_key;i++)
 		DEL(config->key[i]);
 	DEL(config->key);
-	for (i=0;i<config->cert_size;i++)
+	for (i=0;i<config->n_cert;i++)
 		DEL(config->cert[i]);
 	DEL(config->cert);
-	for (i=0;i<config->custom_header_size;i++)
+	for (i=0;i<config->n_custom_header;i++)
 		DEL(config->custom_header[i]);
 	DEL(config->custom_header);
-	for (i=0;i<config->split_dns_size;i++)
+	for (i=0;i<config->n_split_dns;i++)
 		DEL(config->split_dns[i]);
 	DEL(config->split_dns);
 
 	return;
 }
 
-void reload_cfg_file(struct cfg_st* config)
+void reload_cfg_file(cfg_st* config)
 {
+void *p;
 	clear_cfg_file(config);
 
+	p = config->network;
 	memset(config, 0, sizeof(*config));
+	config->network = p;
+
+	memset(config->network, 0, sizeof(*(config->network)));
 
 	parse_cfg_file(cfg_file, config);
 

@@ -1,0 +1,97 @@
+message vpn_st
+{
+	required string name = 1;
+	optional string ipv4_netmask = 2;
+	optional string ipv4 = 3;
+	optional string ipv4_local = 4;
+
+	optional uint32 ipv6_prefix = 5;
+	optional string ipv6_netmask = 6;
+	optional string ipv6 = 7;
+	optional string ipv6_local = 8;
+
+	optional uint32 mtu = 9 [default = 0];
+	repeated string routes = 10;
+	repeated string dns = 11;
+	repeated string nbns = 12;
+
+}
+
+message config_st
+{
+	required string name = 1; /* server name */
+	required uint32 port = 2;
+	optional uint32 udp_port = 3 [default = 0];
+	optional string pin_file = 4;
+	optional string srk_pin_file = 5;
+	repeated string cert = 6;
+	repeated string key = 7;
+
+	optional string ca = 8;
+	optional string crl = 9;
+	optional string dh_params_file = 10;
+	optional string cert_user_oid = 11; /* The OID that will be used to extract the username */
+	optional string cert_group_oid = 12; /* The OID that will be used to extract the groupname */
+
+	required uint32 auth_types = 13;  /* or'ed sequence of AUTH_TYPE */
+	optional string plain_passwd = 14; /* the password file in plain auth mode */
+
+	optional uint32 cert_req = 15 [default = 0];
+	optional string priorities = 16;
+	optional string chroot_dir = 17;
+	optional string banner = 18;
+	optional string ocsp_response = 19; /* file with the OCSP response */
+	optional string default_domain = 20; /* the domain to be advertised */
+
+	repeated string custom_header = 21;
+	repeated string split_dns = 22;
+
+	optional string socket_file_prefix = 23;
+	optional uint32 cookie_validity = 24 [default = 0]; /* in seconds */
+	optional int32 rekey_time = 25 [default = 86400]; /* in seconds */
+	optional uint32 rekey_method = 26 [default = 1]; /* REKEY_METHOD_SSL */
+	
+	optional uint32 min_reauth_time = 27 [default = 0]; /* after a failed auth, how soon one can reauthenticate -> in seconds */
+	optional uint32 auth_timeout = 28 [default = 0]; /* timeout of HTTP auth */
+	optional uint32 idle_timeout = 29 [default = 0]; /* timeout when idle */
+	optional uint32 mobile_idle_timeout = 30 [default = 0]; /* timeout (secs) when a mobile is idle */
+
+	optional uint32 keepalive = 31 [default = 0];
+	optional uint32 dpd = 32 [default = 0];
+	optional uint32 mobile_dpd = 33 [default = 0];
+
+	optional uint32 foreground = 34 [default = 0];
+	optional uint32 debug = 35 [default = 0];
+	optional uint32 max_clients = 36 [default = 0];
+	optional uint32 max_same_clients = 37 [default = 0];
+	optional uint32 use_utmp = 38 [default = 0];
+	optional uint32 use_dbus = 39 [default = 0]; /* whether the D-BUS service is registered */
+	optional uint32 try_mtu = 40 [default = 0]; /* enable MTU discovery */
+	optional uint32 cisco_client_compat = 41 [default = 0]; /* do not require a client certificate
+		* to be presented on every session, and allow authentication
+		* to complete in multiple TCP/HTTP sessions.
+		*/
+	optional uint32 rate_limit_ms = 42 [default = 0]; /* if non zero force a connection every rate_limit milliseconds */
+	optional uint32 ping_leases = 43 [default = 0]; /* non zero if we need to ping prior to leasing */
+	optional uint32 rx_per_sec = 44 [default = 0];
+	optional uint32 tx_per_sec = 45 [default = 0];
+	optional uint32 net_priority = 46 [default = 0];
+	optional uint32 output_buffer = 47 [default = 0];
+	optional uint32 default_mtu = 48 [default = 0];
+	optional string route_add_cmd = 49;
+	optional string route_del_cmd = 50;
+	optional string connect_script = 51;
+	optional string disconnect_script = 52;
+	optional string cgroup = 53;
+
+	optional string xml_config_file = 54;
+	optional string xml_config_hash = 55;
+	optional string cert_hash = 56;
+
+	optional uint32 uid = 57 [default = 0];
+	optional uint32 gid = 58 [default = 0];
+	optional string per_group_dir = 59;
+	optional string per_user_dir = 60;
+
+	required vpn_st network = 61;
+}

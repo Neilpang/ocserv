@@ -107,7 +107,7 @@ int pin_callback(void *user, int attempt, const char *token_url,
 }
 
 static
-int load_pins(struct cfg_st *config, struct pin_st *s)
+int load_pins(cfg_st *config, struct pin_st *s)
 {
 	int fd, ret;
 
@@ -191,7 +191,7 @@ int load_pins(struct cfg_st *config, struct pin_st *s)
  * clients fast without becoming a bottleneck due to private 
  * key operations.
  */
-void sec_mod_server(struct cfg_st *config, const char *socket_file)
+void sec_mod_server(cfg_st *config, const char *socket_file)
 {
 	struct sockaddr_un sa;
 	socklen_t sa_len;
@@ -199,7 +199,7 @@ void sec_mod_server(struct cfg_st *config, const char *socket_file)
 	unsigned i, buffer_size, type;
 	gnutls_privkey_t *key;
 	uint8_t *buffer;
-	unsigned key_size = config->key_size;
+	unsigned key_size = config->n_key;
 	struct pin_st pins;
 	gnutls_datum_t data, out;
 	uint16_t length;
@@ -272,7 +272,7 @@ void sec_mod_server(struct cfg_st *config, const char *socket_file)
 		exit(1);
 	}
 
-	key = malloc(sizeof(*key) * config->key_size);
+	key = malloc(sizeof(*key) * config->n_key);
 	if (key == NULL) {
 		syslog(LOG_ERR, "error in memory allocation");
 		exit(1);

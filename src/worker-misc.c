@@ -142,7 +142,7 @@ udp_fd_fail:
  * 
  * Returns 0 on success.
  */
-int complete_vpn_info(worker_st * ws, struct vpn_st *vinfo)
+int complete_vpn_info(worker_st * ws, vpn_st *vinfo)
 {
 	int ret, fd;
 	struct ifreq ifr;
@@ -151,24 +151,24 @@ int complete_vpn_info(worker_st * ws, struct vpn_st *vinfo)
 		return -1;
 	}
 
-	vinfo->dns_size = ws->config->network.dns_size;
-	if (ws->config->network.dns_size > 0)
-		vinfo->dns = ws->config->network.dns;
+	vinfo->n_dns = ws->config->network->n_dns;
+	if (ws->config->network->n_dns > 0)
+		vinfo->dns = ws->config->network->dns;
 
-	vinfo->nbns_size = ws->config->network.nbns_size;
-	if (ws->config->network.nbns_size > 0)
-		vinfo->nbns = ws->config->network.nbns;
+	vinfo->n_nbns = ws->config->network->n_nbns;
+	if (ws->config->network->n_nbns > 0)
+		vinfo->nbns = ws->config->network->nbns;
 
-	vinfo->routes_size = ws->config->network.routes_size;
-	if (ws->config->network.routes_size > 0)
-		vinfo->routes = ws->config->network.routes;
+	vinfo->n_routes = ws->config->network->n_routes;
+	if (ws->config->network->n_routes > 0)
+		vinfo->routes = ws->config->network->routes;
 
-	vinfo->ipv4_netmask = ws->config->network.ipv4_netmask;
-	vinfo->ipv6_netmask = ws->config->network.ipv6_netmask;
-	vinfo->ipv6_prefix = ws->config->network.ipv6_prefix;
+	vinfo->ipv4_netmask = ws->config->network->ipv4_netmask;
+	vinfo->ipv6_netmask = ws->config->network->ipv6_netmask;
+	vinfo->ipv6_prefix = ws->config->network->ipv6_prefix;
 
-	if (ws->config->network.mtu != 0) {
-		vinfo->mtu = ws->config->network.mtu;
+	if (ws->config->network->mtu != 0) {
+		vinfo->mtu = ws->config->network->mtu;
 	} else {
 		fd = socket(AF_INET, SOCK_STREAM, 0);
 		if (fd == -1)

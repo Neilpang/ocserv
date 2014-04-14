@@ -318,14 +318,14 @@ void tls_global_deinit(struct tls_st *creds)
 
 /* Checks, if there is a single certificate specified, whether it
  * is compatible with all ciphersuites */
-static void certificate_check(struct cfg_st *config, struct tls_st *creds)
+static void certificate_check(cfg_st *config, struct tls_st *creds)
 {
 gnutls_datum_t data = {NULL, 0};
 gnutls_x509_crt_t crt = NULL;
 int ret;
 unsigned usage;
 
-	if (config->cert_size > 1)
+	if (config->n_cert > 1)
 		return;
 
 	if (gnutls_url_is_supported(config->cert[0]) == 0) {
@@ -362,7 +362,7 @@ cleanup:
 	return;
 }
 
-static void set_dh_params(struct cfg_st *config, struct tls_st *creds)
+static void set_dh_params(cfg_st *config, struct tls_st *creds)
 {
 gnutls_datum_t data;
 int ret;
@@ -483,7 +483,7 @@ static void key_cb_deinit_func(gnutls_privkey_t key, void* userdata)
 }
 
 static
-int load_key_files(struct cfg_st *config, struct tls_st *creds, const char *socket_file)
+int load_key_files(cfg_st *config, struct tls_st *creds, const char *socket_file)
 {
 int ret;
 gnutls_pcert_st *pcert_list;
@@ -492,7 +492,7 @@ gnutls_privkey_t key;
 gnutls_datum_t data;
 struct key_cb_data * cdata;
 
-	for (i=0;i<config->key_size;i++) {
+	for (i=0;i<config->n_key;i++) {
 		/* load the certificate */
 		if (gnutls_url_is_supported(config->cert[i]) != 0) {
 			syslog(LOG_ERR, "Loading a certificate from '%s' is unsupported", config->cert[i]);
@@ -549,7 +549,7 @@ struct key_cb_data * cdata;
 }
 
 /* reload key files etc. */
-void tls_global_init_certs(struct cfg_st *config, struct tls_st *creds, const char *socket_file)
+void tls_global_init_certs(cfg_st *config, struct tls_st *creds, const char *socket_file)
 {
 int ret;
 const char* perr;
@@ -567,7 +567,7 @@ const char* perr;
 
 	set_dh_params(config, creds);
 
-	if (config->key_size == 0 || config->cert_size == 0) {
+	if (config->n_key == 0 || config->n_cert == 0) {
 		syslog(LOG_ERR, "no certificate or key files were specified"); 
 		exit(1);
 	}
@@ -615,7 +615,7 @@ const char* perr;
 	return;
 }
 
-void tls_reload_crl(struct cfg_st *config, struct tls_st *creds)
+void tls_reload_crl(cfg_st *config, struct tls_st *creds)
 {
 int ret;
 

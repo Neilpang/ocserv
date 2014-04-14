@@ -144,7 +144,7 @@ typedef struct worker_st {
 	int conn_fd;
 	
 	http_parser *parser;
-	struct cfg_st *config;
+	cfg_st *config;
 	unsigned int auth_state; /* S_AUTH */
 
 	struct sockaddr_storage remote_addr;	/* peer's address */
@@ -203,7 +203,7 @@ typedef struct worker_st {
 	int tun_fd;
 
 	/* information on the tun device addresses and network */
-	struct vpn_st vinfo;
+	vpn_st vinfo;
 	
 	/* additional data - received per user or per group */
 	unsigned routes_size;
@@ -242,7 +242,7 @@ void __attribute__ ((format(printf, 3, 4)))
 #endif
 
 int complete_vpn_info(worker_st * ws,
-                    struct vpn_st* vinfo);
+                      vpn_st* vinfo);
 
 int send_tun_mtu(worker_st *ws, unsigned int mtu);
 int handle_worker_commands(struct worker_st *ws);

@@ -95,7 +95,7 @@ static void add_listener(struct listen_list_st *list,
 	list->total++;
 }
 
-static void set_udp_socket_options(struct cfg_st* config, int fd)
+static void set_udp_socket_options(cfg_st* config, int fd)
 {
 int y;
 	if (config->try_mtu) {
@@ -129,7 +129,7 @@ int val;
 }
 
 static 
-int _listen_ports(struct cfg_st* config, struct addrinfo *res, struct listen_list_st *list)
+int _listen_ports(cfg_st* config, struct addrinfo *res, struct listen_list_st *list)
 {
 	struct addrinfo *ptr;
 	int s, y;
@@ -209,7 +209,7 @@ int _listen_ports(struct cfg_st* config, struct addrinfo *res, struct listen_lis
 /* Returns 0 on success or negative value on error.
  */
 static int
-listen_ports(struct cfg_st* config, struct listen_list_st *list, const char *node)
+listen_ports(cfg_st* config, struct listen_list_st *list, const char *node)
 {
 	struct addrinfo hints, *res;
 	char portname[6];
@@ -458,7 +458,7 @@ static void handle_alarm(int signo)
 	need_maintenance = 1;
 }
 
-static void drop_privileges(struct cfg_st *config)
+static void drop_privileges(cfg_st *config)
 {
 	int ret, e;
 	struct rlimit rl;
@@ -782,7 +782,7 @@ static int check_tcp_wrapper(int fd)
 # define check_tcp_wrapper(x) 0
 #endif
 
-static int syslog_flags(struct cfg_st *config)
+static int syslog_flags(cfg_st *config)
 {
 	int flags = LOG_PID|LOG_NDELAY;
 
@@ -796,16 +796,17 @@ static int syslog_flags(struct cfg_st *config)
 #define CMD_FD 3
 #define CONN_FD 4
 
-static void run_worker(int argc, char **argv, struct cfg_st *config)
+static void run_worker(int argc, char **argv, cfg_st *config)
 {
 	struct worker_st ws;
 	struct tls_st creds;
 	int ret, e, flags;
 
-	/* argv[0]: worker
-	 * argv[1]: config file
-	 * argv[2]: sec-mod socket file
-	 * argv[3]: debug level */
+	/* argv[0]: ocserv-worker (not if we are being traced under valgrind
+	 * argv[1]: literal 'worker'
+	 * argv[2]: config file
+	 * argv[3]: sec-mod socket file
+	 * argv[4]: debug level */
 
 	/* descriptors:
 	 * CMD_FD
@@ -814,12 +815,10 @@ static void run_worker(int argc, char **argv, struct cfg_st *config)
 	kill_on_parent_kill(SIGTERM);
 
 	memset(&ws, 0, sizeof(ws));
-	memset(config, 0, sizeof(*config));
 	memset(&creds, 0, sizeof(creds));
 
-	parse_cfg_file(argv[1], config);
+	worker_cmd_parser(argv[4], argv[2], config);
 	ws.config = config;
-	config->debug = atoi(argv[3]);
 
 	flags = syslog_flags(config);
 	openlog("ocserv-worker", flags, LOG_DAEMON);
@@ -832,7 +831,7 @@ static void run_worker(int argc, char **argv, struct cfg_st *config)
 		syslog(LOG_WARNING, "cannot obtain peer address: %s", strerror(e));
 	}
 
-	tls_global_init_certs(config, &creds, argv[2]);
+	tls_global_init_certs(config, &creds, argv[3]);
 	ws.creds = &creds;
 
 	ws.cmd_fd = CMD_FD;
@@ -860,7 +859,7 @@ int main(int argc, char** argv)
 #endif
 	int cmd_fd[2];
 	struct worker_st ws;
-	struct cfg_st config;
+	cfg_st config;
 	unsigned set;
 	main_server_st s;
 	sigset_t emptyset, blockset;
@@ -870,7 +869,7 @@ int main(int argc, char** argv)
 	/* Initialize GnuTLS */
 	tls_global_init();
 
-	if (argc == 4 && strcmp(argv[0], "ocserv-worker") == 0) {
+	if (argc == 5 && strcmp(argv[1], "worker") == 0) {
 		run_worker(argc, argv, &config);
 		exit(0);
 	}
@@ -1085,7 +1084,7 @@ int main(int argc, char** argv)
 						exit(1);
 
 					snprintf(debugl, sizeof(debugl), "%u", config.debug);
-					execl(s.exe, "ocserv-worker", cfg_file, s.socket_file, debugl, NULL);
+					execl(s.exe, "ocserv-worker", "worker", cfg_file, s.socket_file, debugl, NULL);
 					exit(0);
 				} else if (pid == -1) {
 fork_failed:

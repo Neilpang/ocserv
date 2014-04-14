@@ -586,8 +586,8 @@ static int append_user_info(main_server_st * s, DBusMessageIter * subs,
 			list = ctmp->config.dns;
 			list_size = ctmp->config.dns_size;
 		} else {
-			list = s->config->network.dns;
-			list_size = s->config->network.dns_size;
+			list = s->config->network->dns;
+			list_size = s->config->network->n_dns;
 		}
 		ret = append_list(subs, list, list_size);
 		if (ret < 0)
@@ -597,8 +597,8 @@ static int append_user_info(main_server_st * s, DBusMessageIter * subs,
 			list = ctmp->config.nbns;
 			list_size = ctmp->config.nbns_size;
 		} else {
-			list = s->config->network.nbns;
-			list_size = s->config->network.nbns_size;
+			list = s->config->network->nbns;
+			list_size = s->config->network->n_nbns;
 		}
 		ret = append_list(subs, list, list_size);
 		if (ret < 0)
@@ -608,8 +608,8 @@ static int append_user_info(main_server_st * s, DBusMessageIter * subs,
 			list = ctmp->config.routes;
 			list_size = ctmp->config.routes_size;
 		} else {
-			list = s->config->network.routes;
-			list_size = s->config->network.routes_size;
+			list = s->config->network->routes;
+			list_size = s->config->network->n_routes;
 		}
 		ret = append_list(subs, list, list_size);
 		if (ret < 0)

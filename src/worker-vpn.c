@@ -1337,7 +1337,7 @@ static int connect_handler(worker_st * ws)
 		exit_worker(ws);
 	}
 
-	if (ws->config->network.name == NULL) {
+	if (ws->config->network->name == NULL) {
 		oclog(ws, LOG_ERR,
 		      "no networks are configured; rejecting client");
 		tls_puts(ws->session, "HTTP/1.1 503 Service Unavailable\r\n");
@@ -1443,7 +1443,7 @@ static int connect_handler(worker_st * ws)
 		}
 	}
 
-	for (i = 0; i < ws->vinfo.dns_size; i++) {
+	for (i = 0; i < ws->vinfo.n_dns; i++) {
 		if (req->no_ipv6 != 0 && strchr(ws->vinfo.dns[i], ':') != 0)
 			continue;
 		if (req->no_ipv4 != 0 && strchr(ws->vinfo.dns[i], '.') != 0)
@@ -1455,7 +1455,7 @@ static int connect_handler(worker_st * ws)
 		SEND_ERR(ret);
 	}
 
-	for (i = 0; i < ws->vinfo.nbns_size; i++) {
+	for (i = 0; i < ws->vinfo.n_nbns; i++) {
 		if (req->no_ipv6 != 0 && strchr(ws->vinfo.nbns[i], ':') != 0)
 			continue;
 		if (req->no_ipv4 != 0 && strchr(ws->vinfo.nbns[i], '.') != 0)
@@ -1467,7 +1467,7 @@ static int connect_handler(worker_st * ws)
 		SEND_ERR(ret);
 	}
 
-	for (i = 0; i < ws->config->split_dns_size; i++) {
+	for (i = 0; i < ws->config->n_split_dns; i++) {
 		oclog(ws, LOG_DEBUG, "adding split DNS %s",
 		      ws->config->split_dns[i]);
 		ret =
@@ -1476,7 +1476,7 @@ static int connect_handler(worker_st * ws)
 		SEND_ERR(ret);
 	}
 
-	for (i = 0; i < ws->vinfo.routes_size; i++) {
+	for (i = 0; i < ws->vinfo.n_routes; i++) {
 		if (strchr(ws->vinfo.routes[i], ':') != 0)
 			ip6 = 1;
 		else
@@ -1572,7 +1572,7 @@ static int connect_handler(worker_st * ws)
 		       "X-CSTP-License: accept\r\n");
 	SEND_ERR(ret);
 
-	for (i = 0; i < ws->config->custom_header_size; i++) {
+	for (i = 0; i < ws->config->n_custom_header; i++) {
 		oclog(ws, LOG_DEBUG, "adding custom header '%s'",
 		      ws->config->custom_header[i]);
 		ret =
