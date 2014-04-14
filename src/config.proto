@@ -88,8 +88,8 @@ message config_st
 	optional string xml_config_hash = 55;
 	optional string cert_hash = 56;
 
-	optional uint32 uid = 57 [default = 0];
-	optional uint32 gid = 58 [default = 0];
+	required uint32 uid = 57;
+	required uint32 gid = 58;
 	optional string per_group_dir = 59;
 	optional string per_user_dir = 60;
 

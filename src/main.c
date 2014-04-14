@@ -33,6 +33,8 @@
 #include <sys/resource.h>
 #include <cloexec.h>
 #include <script-list.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 
 #include <gnutls/x509.h>
 #include <gnutls/crypto.h>
@@ -793,14 +795,56 @@ static int syslog_flags(cfg_st *config)
 	return flags;
 }
 
+#define SHARED_MEM_SIZE 64*1024
+static void create_shared_mem(struct main_server_st *s)
+{
+	int fd, ret, e;
+	char name[_POSIX_PATH_MAX];
+	void *mem;
+
+	snprintf(name, sizeof(name), "ocserv-%u.shm", (unsigned)getpid());
+
+	fd = shm_open(name, O_RDWR|O_CREAT, S_IRWXU);
+	if (fd == -1) {
+		e = errno;
+		fprintf(stderr, "Could not create shared memory object '%s': %s\n", name, strerror(e));
+		exit(1);
+	}
+	set_cloexec_flag(fd, 0);
+
+	ret = ftruncate(fd, SHARED_MEM_SIZE);
+	if (ret == -1) {
+		e = errno;
+		fprintf(stderr, "Error in ftruncate: %s\n", strerror(e));
+		exit(1);
+	}
+
+	mem = mmap(NULL, SHARED_MEM_SIZE, PROT_WRITE|PROT_READ, MAP_SHARED, fd, 0);
+	if (mem == MAP_FAILED) {
+		e = errno;
+		fprintf(stderr, "Error in mmap: %s\n", strerror(e));
+		exit(1);
+	}
+
+	shm_unlink(name);
+
+	s->shm_fd = fd;
+	s->shared_mem = mem;
+
+	return;
+}
+
+#define SHM_FD 0
 #define CMD_FD 3
 #define CONN_FD 4
 
-static void run_worker(int argc, char **argv, cfg_st *config)
+static void run_worker(int argc, char **argv)
 {
 	struct worker_st ws;
 	struct tls_st creds;
 	int ret, e, flags;
+	void *shm_mem;
+	uint32_t len;
 
 	/* argv[0]: ocserv-worker (not if we are being traced under valgrind
 	 * argv[1]: literal 'worker'
@@ -809,6 +853,7 @@ static void run_worker(int argc, char **argv, cfg_st *config)
 	 * argv[4]: debug level */
 
 	/* descriptors:
+	 * SHM_FD
 	 * CMD_FD
 	 * CONN_FD
 	 */
@@ -817,10 +862,27 @@ static void run_worker(int argc, char **argv, cfg_st *config)
 	memset(&ws, 0, sizeof(ws));
 	memset(&creds, 0, sizeof(creds));
 
-	worker_cmd_parser(argv[4], argv[2], config);
-	ws.config = config;
+	shm_mem = mmap(NULL, SHARED_MEM_SIZE, PROT_READ, MAP_SHARED, SHM_FD, 0);
+	if (shm_mem == MAP_FAILED) {
+		e = errno;
+		syslog(LOG_ERR, "error in config mmap: %s\n", strerror(e));
+		exit(1);
+	}
 
-	flags = syslog_flags(config);
+	memcpy(&len, shm_mem, 4);
+	shm_mem += 4;
+	ws.config = config_st__unpack(NULL, len, shm_mem);
+	if (ws.config == NULL) {
+		syslog(LOG_ERR, "could not unpack configuration\n");
+		exit(1);
+	}
+	ws.config->debug = atoi(argv[4]);
+
+	/* we don't need the shared memory part any more */
+	munmap(shm_mem, SHARED_MEM_SIZE);
+	close(SHM_FD);
+
+	flags = syslog_flags(ws.config);
 	openlog("ocserv-worker", flags, LOG_DAEMON);
 	syslog_open = 1;
 
@@ -831,7 +893,13 @@ static void run_worker(int argc, char **argv, cfg_st *config)
 		syslog(LOG_WARNING, "cannot obtain peer address: %s", strerror(e));
 	}
 
-	tls_global_init_certs(config, &creds, argv[3]);
+	ret = gnutls_rnd(GNUTLS_RND_RANDOM, ws.sid, sizeof(ws.sid));
+	if (ret < 0) {
+		syslog(LOG_ERR, "error generating SID");
+		exit(1);
+	}
+
+	tls_global_init_certs(ws.config, &creds, argv[3]);
 	ws.creds = &creds;
 
 	ws.cmd_fd = CMD_FD;
@@ -839,7 +907,7 @@ static void run_worker(int argc, char **argv, cfg_st *config)
 	ws.udp_fd = -1;
 	ws.conn_fd = CONN_FD;
 
-	drop_privileges(config);
+	drop_privileges(ws.config);
 
 	vpn_server(&ws);
 }
@@ -858,9 +926,9 @@ int main(int argc, char** argv)
 	struct timeval ts;
 #endif
 	int cmd_fd[2];
-	struct worker_st ws;
 	cfg_st config;
 	unsigned set;
+	uint32_t len32;
 	main_server_st s;
 	sigset_t emptyset, blockset;
 
@@ -870,7 +938,7 @@ int main(int argc, char** argv)
 	tls_global_init();
 
 	if (argc == 5 && strcmp(argv[1], "worker") == 0) {
-		run_worker(argc, argv, &config);
+		run_worker(argc, argv);
 		exit(0);
 	}
 
@@ -908,12 +976,21 @@ int main(int argc, char** argv)
 		exit(1);
 	}
 
+	create_shared_mem(&s);
+
 	/* load configuration */
 	ret = cmd_parser(argc, argv, &config);
 	if (ret < 0) {
 		fprintf(stderr, "Error in arguments\n");
 		exit(1);
 	}
+
+	len32 = config_st__pack(&config, s.shared_mem+4);
+	if (len32 == 0) {
+		fprintf(stderr, "Error packing configuration!\n");
+		exit(1);
+	}
+	memcpy(s.shared_mem, &len32, 4);
 
 	setproctitle(PACKAGE_NAME"-main");
 
@@ -1032,15 +1109,9 @@ int main(int argc, char** argv)
 					continue;
 				}
 
-				ret = gnutls_rnd(GNUTLS_RND_RANDOM, ws.sid, sizeof(ws.sid));
-				if (ret < 0) {
-					close(fd);
-					mslog(&s, NULL, LOG_ERR, "Error generating SID");
-					break;
-				}
 
 				/* Check if the client is on the banned list */
-				ret = check_if_banned(&s, &ws.remote_addr, ws.remote_addr_len);
+				ret = check_if_banned(&s, &ctmp->remote_addr, ctmp->remote_addr_len);
 				if (ret < 0) {
 					/* banned */
 					close(fd);
@@ -1078,6 +1149,8 @@ int main(int argc, char** argv)
 					/* Drop privileges after this point */
 					sigprocmask(SIG_UNBLOCK, &blockset, NULL);
 
+					if (dup2(s.shm_fd, SHM_FD) == -1)
+						exit(1);
 					if (dup2(cmd_fd[1], CMD_FD) == -1)
 						exit(1);
 					if (dup2(fd, CONN_FD) == -1)

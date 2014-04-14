@@ -568,20 +568,29 @@ unsigned force_cert_auth;
 	check_cfg(config);
 }
 
-
 int cmd_parser (int argc, char **argv, cfg_st* config)
 {
+	optionProcess( &ocservOptions, argc, argv);
 
-	memset(config, 0, sizeof(*config));
-
-	config->network = calloc(1, sizeof(*(config->network)));
-	if (config->network == NULL) {
-		fprintf(stderr, "memory error\n");
+	if (HAVE_OPT(CONFIG)) {
+		cfg_file = OPT_ARG(CONFIG);
+	} else if (access(cfg_file, R_OK) != 0) {
+		fprintf(stderr, "%s -c [config]\nUse %s --help for more information.\n", argv[0], argv[0]);
 		exit(1);
 	}
 
-	optionProcess( &ocservOptions, argc, argv);
-  
+	config_st__init(config);
+
+	config->network = malloc(sizeof(*(config->network)));
+	if (config->network == NULL) {
+		syslog(LOG_ERR, "memory error\n");
+		exit(1);
+	}
+
+	vpn_st__init(config->network);
+
+	parse_cfg_file(cfg_file, config);
+
 	if (HAVE_OPT(FOREGROUND))
 		config->foreground = 1;
 
@@ -591,35 +600,9 @@ int cmd_parser (int argc, char **argv, cfg_st* config)
 	if (HAVE_OPT(DEBUG))
 		config->debug = OPT_VALUE_DEBUG;
 
-	if (HAVE_OPT(CONFIG)) {
-		cfg_file = OPT_ARG(CONFIG);
-	} else if (access(cfg_file, R_OK) != 0) {
-		fprintf(stderr, "%s -c [config]\nUse %s --help for more information.\n", argv[0], argv[0]);
-		exit(1);
-	}
-
-	parse_cfg_file(cfg_file, config);
-
 	return 0;
 }
 
-void worker_cmd_parser (const char *debug, const char *cfg_file, cfg_st* config)
-{
-
-	memset(config, 0, sizeof(*config));
-
-	config->network = calloc(1, sizeof(*(config->network)));
-	if (config->network == NULL) {
-		syslog(LOG_ERR, "memory error\n");
-		exit(1);
-	}
-
-	config->debug = atoi(debug);
-
-	parse_cfg_file(cfg_file, config);
-
-	return;
-}
 
 #define DEL(x) {free(x);x=NULL;}
 void clear_cfg_file(cfg_st* config)
@@ -689,10 +672,10 @@ void *p;
 	clear_cfg_file(config);
 
 	p = config->network;
-	memset(config, 0, sizeof(*config));
+	config_st__init(config);
 	config->network = p;
 
-	memset(config->network, 0, sizeof(*(config->network)));
+	vpn_st__init(config->network);
 
 	parse_cfg_file(cfg_file, config);
 

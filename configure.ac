@@ -43,6 +43,11 @@ AC_CHECK_MEMBERS([struct iphdr.ihl], [],
 AC_CHECK_SIZEOF([unsigned long])
 AC_C_BIGENDIAN
 
+AC_LIB_HAVE_LINKFLAGS(rt,, [#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+], [shm_open (0,0,0);])
+
 PKG_CHECK_MODULES([LIBGNUTLS], [gnutls >= 3.1.10])
 AC_CHECK_LIB(gnutls, gnutls_pkcs11_reinit, [
 AC_DEFINE([HAVE_PKCS11], [], [PKCS11 detected in gnutls])
