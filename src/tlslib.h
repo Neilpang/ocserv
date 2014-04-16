@@ -75,7 +75,6 @@ void tls_fatal_close(gnutls_session_t session,
 
 struct tls_st {
 	gnutls_certificate_credentials_t xcred;
-	gnutls_priority_t cprio;
 	gnutls_dh_params_t dh_params;
 };
 

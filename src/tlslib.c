@@ -308,8 +308,6 @@ void tls_global_deinit(struct tls_st *creds)
 {
 	if (creds->xcred != NULL)
 		gnutls_certificate_free_credentials(creds->xcred);
-	if (creds->cprio != NULL)
-		gnutls_priority_deinit(creds->cprio);
 
 	gnutls_global_deinit();
 
@@ -600,11 +598,6 @@ const char* perr;
 		gnutls_certificate_set_verify_function(creds->xcred,
 						       verify_certificate_cb);
 	}
-
-	ret = gnutls_priority_init(&creds->cprio, config->priorities, &perr);
-	if (ret == GNUTLS_E_PARSING_ERROR)
-		syslog(LOG_ERR, "error in TLS priority string: %s", perr);
-	GNUTLS_FATAL_ERR(ret);
 
 	if (config->ocsp_response != NULL) {
 		ret = gnutls_certificate_set_ocsp_status_request_file(creds->xcred,

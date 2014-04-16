@@ -641,6 +641,7 @@ void vpn_server(struct worker_st *ws)
 	http_parser_settings settings;
 	url_handler_fn fn;
 	int requests_left = MAX_HTTP_REQUESTS;
+	const char *perr;
 
 	ocsignal(SIGTERM, handle_term);
 	ocsignal(SIGINT, handle_term);
@@ -666,7 +667,9 @@ void vpn_server(struct worker_st *ws)
 	ret = gnutls_init(&session, GNUTLS_SERVER);
 	GNUTLS_FATAL_ERR(ret);
 
-	ret = gnutls_priority_set(session, ws->creds->cprio);
+	ret = gnutls_priority_set_direct(session, ws->config->priorities, &perr);
+	if (ret == GNUTLS_E_PARSING_ERROR)
+		oclog(ws, LOG_ERR, "error in TLS priority string: %s", perr);
 	GNUTLS_FATAL_ERR(ret);
 
 	ret =
