@@ -43,6 +43,7 @@
 #ifdef HAVE_LIBWRAP
 # include <tcpd.h>
 #endif
+#include <semaphore.h>
 
 #ifdef HAVE_LIBSYSTEMD_DAEMON
 # include <systemd/sd-daemon.h>
@@ -713,6 +714,93 @@ fail:
 
 }
 
+static
+void pack_config(main_server_st *s, cfg_st *config, unsigned init)
+{
+	uint32_t len32;
+	int ret, e;
+	void *mem = s->shared_mem;
+	sem_t *sem = mem;
+
+	if (init != 0) {
+		ret = sem_init(sem, 1, 0);
+		if (ret == -1) {
+			e = errno;
+			fprintf(stderr, "semaphore error: %s\n", strerror(e));
+			exit(1);
+		}
+	} else {
+		if (sem_wait(sem) == -1) {
+			e = errno;
+			syslog(LOG_ERR, "semaphore wait error: %s\n", strerror(e));
+			exit(1);
+		}
+	}
+
+	mem += sizeof(*sem);
+
+	len32 = config_st__pack(config, mem+4);
+	if (len32 == 0) {
+		if (init != 0)
+			fprintf(stderr, "Error packing configuration!\n");
+		else
+			syslog(LOG_ERR, "error packing configuration\n");
+		exit(1);
+	}
+	memcpy(mem, &len32, 4);
+
+	ret = sem_post(sem);
+	if (ret == -1) {
+		e = errno;
+		if (init != 0)
+			fprintf(stderr, "semaphore post error: %s\n", strerror(e));
+		else
+			syslog(LOG_ERR, "semaphore post error: %s\n", strerror(e));
+		exit(1);
+	}
+}
+
+static cfg_st *unpack_config(void *mem, unsigned mem_size)
+{
+	uint32_t len;
+	int e;
+	sem_t *sem = mem;
+	cfg_st *config;
+
+	if (sem_wait(sem) == -1) {
+		e = errno;
+		syslog(LOG_ERR, "semaphore wait error: %s\n", strerror(e));
+		exit(1);
+	}
+
+	mem += sizeof(*sem);
+	mem_size -= sizeof(*sem);
+
+	memcpy(&len, mem, 4);
+	mem += 4;
+	mem_size -= 4;
+
+	if (len > mem_size) {
+		syslog(LOG_ERR, "error in shared memory!\n");
+		exit(1);
+	}
+
+	config = config_st__unpack(NULL, len, mem);
+
+	if (sem_post(sem) == -1) {
+		e = errno;
+		syslog(LOG_ERR, "semaphore post error: %s\n", strerror(e));
+		exit(1);
+	}
+
+	if (config == NULL) {
+		syslog(LOG_ERR, "could not unpack configuration\n");
+		exit(1);
+	}
+
+	return config;
+}
+
 #define MAINTAINANCE_TIME(s) (MIN((300 + MAX_ZOMBIE_SECS), ((s)->config->cookie_validity + 300)))
 
 static void check_other_work(main_server_st *s)
@@ -722,7 +810,7 @@ unsigned total = 10;
 	if (reload_conf != 0) {
 		mslog(s, NULL, LOG_INFO, "reloading configuration");
 		reload_cfg_file(s->config);
-//		tls_reload_crl(s);
+		pack_config(s, s->config, 0);
 		reload_conf = 0;
 	}
 
@@ -844,7 +932,6 @@ static void run_worker(int argc, char **argv)
 	struct tls_st creds;
 	int ret, e, flags;
 	void *shm_mem;
-	uint32_t len;
 
 	/* argv[0]: ocserv-worker (not if we are being traced under valgrind
 	 * argv[1]: literal 'worker'
@@ -862,20 +949,15 @@ static void run_worker(int argc, char **argv)
 	memset(&ws, 0, sizeof(ws));
 	memset(&creds, 0, sizeof(creds));
 
-	shm_mem = mmap(NULL, SHARED_MEM_SIZE, PROT_READ, MAP_SHARED, SHM_FD, 0);
+	shm_mem = mmap(NULL, SHARED_MEM_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, SHM_FD, 0);
 	if (shm_mem == MAP_FAILED) {
 		e = errno;
 		syslog(LOG_ERR, "error in config mmap: %s\n", strerror(e));
 		exit(1);
 	}
 
-	memcpy(&len, shm_mem, 4);
-	shm_mem += 4;
-	ws.config = config_st__unpack(NULL, len, shm_mem);
-	if (ws.config == NULL) {
-		syslog(LOG_ERR, "could not unpack configuration\n");
-		exit(1);
-	}
+	ws.config = unpack_config(shm_mem, SHARED_MEM_SIZE);
+
 	ws.config->debug = atoi(argv[4]);
 
 	/* we don't need the shared memory part any more */
@@ -927,7 +1009,6 @@ int main(int argc, char** argv)
 	int cmd_fd[2];
 	cfg_st config;
 	unsigned set;
-	uint32_t len32;
 	main_server_st s;
 	sigset_t emptyset, blockset;
 
@@ -984,12 +1065,7 @@ int main(int argc, char** argv)
 		exit(1);
 	}
 
-	len32 = config_st__pack(&config, s.shared_mem+4);
-	if (len32 == 0) {
-		fprintf(stderr, "Error packing configuration!\n");
-		exit(1);
-	}
-	memcpy(s.shared_mem, &len32, 4);
+	pack_config(&s, &config, 1);
 
 	setproctitle(PACKAGE_NAME"-main");
 
@@ -1028,9 +1104,6 @@ int main(int argc, char** argv)
 	write_pid_file();
 	
 	run_sec_mod(&s);
-
-	/* Initialize certificates */
-//	tls_global_init_certs(&config, &s.creds);
 
 	mslog(&s, NULL, LOG_INFO, "initialized %s", PACKAGE_STRING);
 
