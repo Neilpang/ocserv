@@ -601,14 +601,14 @@ const char* perr;
 						       verify_certificate_cb);
 	}
 
-	ret = gnutls_priority_init(&s->creds.cprio, s->config->priorities, &perr);
+	ret = gnutls_priority_init(&creds->cprio, config->priorities, &perr);
 	if (ret == GNUTLS_E_PARSING_ERROR)
 		syslog(LOG_ERR, "error in TLS priority string: %s", perr);
 	GNUTLS_FATAL_ERR(ret);
 
-	if (s->config->ocsp_response != NULL) {
-		ret = gnutls_certificate_set_ocsp_status_request_file(s->creds.xcred,
-			s->config->ocsp_response, 0);
+	if (config->ocsp_response != NULL) {
+		ret = gnutls_certificate_set_ocsp_status_request_file(creds->xcred,
+			config->ocsp_response, 0);
 		GNUTLS_FATAL_ERR(ret);
 	}
 
