@@ -1,6 +1,6 @@
 Short term items:
 
-* Add support for libubus
+* Add user-profile to the group configured options.
 
 * Think for ways for ocserv to co-exist on the same system with
   an HTTPS server (while sharing the same port).
@@ -17,10 +17,6 @@ Short term items:
   connection.
 
 * Give each worker a limited number of accesses to the security module.
-
-* Switch to a fork-then-exec mode to reduce memory usage on workers.
-
-* Use talloc in main process to simplify the release of resources.
 
 Long term items:
 
