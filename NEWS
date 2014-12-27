@@ -1,3 +1,7 @@
+* Version 0.8.10 (unreleased)
+- Corrected issue with IPv6 prefix handling.
+
+
 * Version 0.8.9 (released 2014-12-10)
 - Added configuration option 'listen-host-is-dyndns'. That,
   if set, notifies the client with "X-CSTP-DynDNS: true", in
