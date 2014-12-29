@@ -1528,12 +1528,14 @@ static int connect_handler(worker_st * ws)
 			    cstp_printf(ws, "X-CSTP-Address: %s\r\n",
 				       ws->vinfo.ipv6);
 			SEND_ERR(ret);
-		}
 
-		ret =
-		    cstp_printf(ws, "X-CSTP-Netmask: %s/%u\r\n",
-			       ws->vinfo.ipv6, ws->vinfo.ipv6_prefix);
-		SEND_ERR(ret);
+			if (ws->vinfo.ipv6_network) {
+				ret =
+				    cstp_printf(ws, "X-CSTP-Netmask: %s/%u\r\n",
+					        ws->vinfo.ipv6_network, ws->vinfo.ipv6_prefix);
+				SEND_ERR(ret);
+			}
+		}
 	}
 
 	for (i = 0; i < ws->vinfo.dns_size; i++) {
