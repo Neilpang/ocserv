@@ -1,6 +1,6 @@
 * Version 0.8.10 (unreleased)
 - Corrected issue with IPv6 prefix handling.
-- Enabled IPv6 for non-openconnect clients.
+- Enabled IPv6 address assignment for non-openconnect clients.
 
 
 * Version 0.8.9 (released 2014-12-10)
