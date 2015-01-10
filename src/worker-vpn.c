@@ -1925,17 +1925,6 @@ static int connect_handler(worker_st * ws)
 	for (;;) {
 		FD_ZERO(&rfds);
 
-		FD_SET(ws->conn_fd, &rfds);
-		FD_SET(ws->cmd_fd, &rfds);
-		FD_SET(ws->tun_fd, &rfds);
-		max = MAX(ws->cmd_fd, ws->conn_fd);
-		max = MAX(max, ws->tun_fd);
-
-		if (ws->udp_state > UP_WAIT_FD) {
-			FD_SET(ws->udp_fd, &rfds);
-			max = MAX(max, ws->udp_fd);
-		}
-
 		if (terminate != 0) {
  terminate:
 			ws->buffer[0] = 'S';
@@ -1967,6 +1956,17 @@ static int connect_handler(worker_st * ws)
 		}
 
 		if (tls_pending == 0 && dtls_pending == 0) {
+			FD_SET(ws->conn_fd, &rfds);
+			FD_SET(ws->cmd_fd, &rfds);
+			FD_SET(ws->tun_fd, &rfds);
+			max = MAX(ws->cmd_fd, ws->conn_fd);
+			max = MAX(max, ws->tun_fd);
+
+			if (ws->udp_state > UP_WAIT_FD) {
+				FD_SET(ws->udp_fd, &rfds);
+				max = MAX(max, ws->udp_fd);
+			}
+
 #ifdef HAVE_PSELECT
 			tv.tv_nsec = 0;
 			tv.tv_sec = 10;
