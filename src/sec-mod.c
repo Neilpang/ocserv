@@ -42,18 +42,26 @@
 #include <ipc.pb-c.h>
 #include <sec-mod-sup-config.h>
 #include <cloexec.h>
+#include <ev.h>
+#include <ccan/container_of/container_of.h>
 
 #include <gnutls/gnutls.h>
 #include <gnutls/crypto.h>
 #include <gnutls/abstract.h>
 
+/* the maximum time a worker may be connected without sending a request */
+#define MAX_WORKER_TIME 20
+
 #define MAX_WAIT_SECS 3
 #define MAX_PIN_SIZE GNUTLS_PKCS11_MAX_PIN_LEN
 #define MAINTAINANCE_TIME 310
 
-static int need_maintainance = 0;
-static int need_reload = 0;
-static int need_exit = 0;
+struct ev_loop *sm_loop;
+ev_io main_watcher;
+ev_io worker_watcher;
+ev_signal reload_sig_watcher;
+ev_signal term_sig_watcher;
+ev_timer maintainance_watcher;
 
 struct pin_st {
 	char pin[MAX_PIN_SIZE];
@@ -385,36 +393,12 @@ int process_packet_from_main(void *pool, int fd, sec_mod_st * sec, cmd_request_t
 	return 0;
 }
 
-static void handle_alarm(int signo)
+static void maintainance_watcher_cb(EV_P_ ev_timer *w, int revents)
 {
-	need_maintainance = 1;
-}
-
-static void handle_sighup(int signo)
-{
-	need_reload = 1;
-}
-
-static void handle_sigterm(int signo)
-{
-	need_exit = 1;
-}
-
-static void check_other_work(sec_mod_st *sec)
-{
+	sec_mod_st *sec = ev_userdata(sm_loop);
 	time_t now = time(0);
 
-	if (need_exit) {
-		unsigned i;
-
-		for (i = 0; i < sec->key_size; i++) {
-			gnutls_privkey_deinit(sec->key[i]);
-		}
-
-		sec_mod_client_db_deinit(sec);
-		talloc_free(sec);
-		exit(0);
-	}
+	seclog(sec, LOG_DEBUG, "performing maintenance");
 
 	if (sec->config->cookie_rekey_time > 0 && now - sec->cookie_key_last_update > sec->config->cookie_rekey_time) {
 		uint8_t cookie_key[COOKIE_KEY_SIZE];
@@ -433,33 +417,36 @@ static void check_other_work(sec_mod_st *sec)
 		}
 	}
 
-	if (need_reload) {
-		seclog(sec, LOG_DEBUG, "reloading configuration");
-		reload_cfg_file(sec, sec->perm_config, 0);
-		sec->config = sec->perm_config->config;
-		need_reload = 0;
-	}
+	cleanup_client_entries(sec);
+	seclog(sec, LOG_DEBUG, "active sessions %d", sec_mod_client_db_elems(sec));
+}
 
-	if (need_maintainance) {
-		seclog(sec, LOG_DEBUG, "performing maintenance");
-		cleanup_client_entries(sec);
-		seclog(sec, LOG_DEBUG, "active sessions %d", 
-			sec_mod_client_db_elems(sec));
-		alarm(MAINTAINANCE_TIME);
-		need_maintainance = 0;
-	}
+static void reload_sig_watcher_cb(struct ev_loop *loop, ev_signal *w, int revents)
+{
+	sec_mod_st *sec = ev_userdata(loop);
+
+	seclog(sec, LOG_DEBUG, "reloading configuration");
+	reload_cfg_file(sec, sec->perm_config);
+	sec->config = sec->perm_config->config;
+}
+
+static void term_sig_watcher_cb(struct ev_loop *loop, ev_signal *w, int revents)
+{
+	ev_break (loop, EVBREAK_ALL);
 }
 
 static
-int serve_request_main(sec_mod_st *sec, int fd, uint8_t *buffer, unsigned buffer_size)
+int serve_request_main(sec_mod_st *sec, void *pool, int fd, uint8_t *buffer, unsigned buffer_size)
 {
 	int ret, e;
 	unsigned cmd, length;
 	uint16_t l16;
-	void *pool = buffer;
 
 	/* read request */
-	ret = force_read_timeout(fd, buffer, 3, MAIN_SEC_MOD_TIMEOUT);
+	do {
+		ret = read(fd, buffer, buffer_size);
+	} while(ret == -1 && (errno == EINTR || errno == EAGAIN));
+
 	if (ret == 0)
 		goto leave;
 	else if (ret < 3) {
@@ -481,23 +468,13 @@ int serve_request_main(sec_mod_st *sec, int fd, uint8_t *buffer, unsigned buffer
 		return ERR_BAD_COMMAND;
 	}
 
-	if (length > buffer_size - 4) {
-		seclog(sec, LOG_ERR, "received too big message (%d)", length);
+	if (length > buffer_size - 4 || length > ret-3) {
+		seclog(sec, LOG_ERR, "invalid message length from main %d, have %d", length, ret-3);
 		ret = ERR_BAD_COMMAND;
 		goto leave;
 	}
 
-	/* read the body */
-	ret = force_read_timeout(fd, buffer, length, MAIN_SEC_MOD_TIMEOUT);
-	if (ret < 0) {
-		e = errno;
-		seclog(sec, LOG_ERR, "error receiving msg body of cmd %u with length %u: %s",
-		       cmd, (unsigned)length, strerror(e));
-		ret = ERR_BAD_COMMAND;
-		goto leave;
-	}
-
-	ret = process_packet_from_main(pool, fd, sec, cmd, buffer, ret);
+	ret = process_packet_from_main(pool, fd, sec, cmd, buffer+3, length);
 	if (ret < 0) {
 		seclog(sec, LOG_ERR, "error processing data for '%s' command (%d)", cmd_request_to_str(cmd), ret);
 	}
@@ -507,15 +484,17 @@ int serve_request_main(sec_mod_st *sec, int fd, uint8_t *buffer, unsigned buffer
 }
 
 static
-int serve_request(sec_mod_st *sec, int cfd, pid_t pid, uint8_t *buffer, unsigned buffer_size)
+int serve_request(sec_mod_st *sec, void *pool, int cfd, pid_t pid, uint8_t *buffer, unsigned buffer_size)
 {
 	int ret, e;
 	unsigned cmd, length;
 	uint16_t l16;
-	void *pool = buffer;
 
 	/* read request */
-	ret = force_read_timeout(cfd, buffer, 3, MAX_WAIT_SECS);
+	do {
+		ret = read(cfd, buffer, buffer_size);
+	} while(ret == -1 && (errno == EINTR || errno == EAGAIN));
+
 	if (ret == 0)
 		goto leave;
 	else if (ret < 3) {
@@ -530,29 +509,141 @@ int serve_request(sec_mod_st *sec, int cfd, pid_t pid, uint8_t *buffer, unsigned
 	memcpy(&l16, &buffer[1], 2);
 	length = l16;
 
-	if (length > buffer_size - 4) {
-		seclog(sec, LOG_INFO, "too big message (%d)", length);
+	if (length > buffer_size - 4 || length > ret-3) {
+		seclog(sec, LOG_INFO, "invalid message length %d, have %d", length, ret-3);
 		ret = -1;
 		goto leave;
 	}
 
-	/* read the body */
-	ret = force_read_timeout(cfd, buffer, length, MAX_WAIT_SECS);
-	if (ret < 0) {
-		e = errno;
-		seclog(sec, LOG_INFO, "error receiving msg body: %s",
-		       strerror(e));
-		ret = -1;
-		goto leave;
-	}
-
-	ret = process_packet(pool, cfd, pid, sec, cmd, buffer, ret);
+	ret = process_packet(pool, cfd, pid, sec, cmd, buffer+3, length);
 	if (ret < 0) {
 		seclog(sec, LOG_INFO, "error processing data for '%s' command (%d)", cmd_request_to_str(cmd), ret);
 	}
 	
  leave:
 	return ret;
+}
+
+static void main_watcher_cb (EV_P_ ev_io *w, int revents)
+{
+	sec_mod_st *sec = ev_userdata(sm_loop);
+	uint8_t *buffer;
+	unsigned buffer_size;
+	int ret;
+
+	/* we do a new allocation, to also use it as pool for the
+	 * parsers to use */
+	buffer_size = MAX_MSG_SIZE;
+	buffer = talloc_size(sec, buffer_size);
+	if (buffer == NULL) {
+		seclog(sec, LOG_ERR, "error in memory allocation");
+		exit(1);
+	}
+
+	ret = serve_request_main(sec, buffer, w->fd, buffer, buffer_size);
+	if (ret < 0 && ret == ERR_BAD_COMMAND) {
+		seclog(sec, LOG_ERR, "error processing async command from main");
+		exit(1);
+	}
+	talloc_free(buffer);
+}
+
+typedef struct worker_request_st {
+	ev_io io;
+	ev_timer timer;
+	pid_t pid;
+	int fd;
+	unsigned buffer_size;
+	uint8_t *buffer;
+} worker_request_st;
+
+static void worker_request_watcher_cb (EV_P_ ev_io *w, int revents)
+{
+	sec_mod_st *sec = ev_userdata(sm_loop);
+	worker_request_st *wls = container_of(w, struct worker_request_st, io);
+
+	serve_request(sec, wls, w->fd, wls->pid, wls->buffer, wls->buffer_size);
+
+	ev_io_stop(EV_A_ w);
+	ev_timer_stop(EV_A_ &wls->timer);
+	close(w->fd);
+	talloc_free(wls);
+}
+
+static void worker_request_watcher_timeout_cb (EV_P_ ev_timer *w, int revents)
+{
+	worker_request_st *wls = container_of(w, struct worker_request_st, timer);
+
+	ev_io_stop(EV_A_ &wls->io);
+	ev_timer_stop(EV_A_ w);
+	close(wls->fd);
+	talloc_free(wls);
+}
+
+static void worker_watcher_cb (EV_P_ ev_io *w, int revents)
+{
+	sec_mod_st *sec = ev_userdata(sm_loop);
+	struct sockaddr_un sa;
+	socklen_t sa_len;
+	int cfd, e, ret;
+	uid_t uid;
+	pid_t pid;
+	worker_request_st *wls;
+
+	sa_len = sizeof(sa);
+	cfd = accept(w->fd, (struct sockaddr *)&sa, &sa_len);
+	if (cfd == -1) {
+		e = errno;
+		if (e != EINTR) {
+			seclog(sec, LOG_DEBUG,
+			       "sec-mod error accepting connection: %s",
+			       strerror(e));
+			return;
+		}
+	}
+	set_cloexec_flag (cfd, 1);
+
+	/* do not allow unauthorized processes to issue commands
+	 */
+	ret = check_upeer_id("sec-mod", sec->config->debug, cfd, sec->perm_config->uid, sec->perm_config->gid, &uid, &pid);
+	if (ret < 0) {
+		seclog(sec, LOG_INFO, "rejected unauthorized connection");
+		close(cfd);
+		return;
+	}
+
+	/* we do a new allocation, to also use it as pool for the
+	 * parsers to use */
+	wls = talloc_size(sec, sizeof(worker_request_st)+MAX_MSG_SIZE);
+	if (wls == NULL) {
+		seclog(sec, LOG_ERR, "error in memory allocation");
+		close(cfd);
+		return;
+	}
+
+	wls->buffer = ((uint8_t*)wls)+sizeof(worker_request_st);
+	wls->buffer_size = MAX_MSG_SIZE;
+	wls->fd = cfd;
+	wls->pid = pid;
+
+	memset(wls->buffer, 0, wls->buffer_size);
+	ev_io_init(&wls->io, worker_request_watcher_cb, cfd, EV_READ);
+
+	ev_init(&wls->timer, worker_request_watcher_timeout_cb);
+	ev_timer_set(&wls->timer, MAX_WORKER_TIME, 0);
+
+	ev_io_start(sm_loop, &wls->io);
+	ev_timer_start(sm_loop, &wls->timer);
+
+	return;
+}
+
+
+static void syserr_cb(const char *msg)
+{
+	sec_mod_st *sec = ev_userdata(sm_loop);
+	seclog(sec, LOG_ERR, "libev fatal error: %s", msg);
+	abort();
 }
 
 /* sec_mod_server:
@@ -588,33 +679,21 @@ void sec_mod_server(void *main_pool, struct perm_cfg_st *perm_config, const char
 		    uint8_t cookie_key[COOKIE_KEY_SIZE], int cmd_fd, int cmd_fd_sync)
 {
 	struct sockaddr_un sa;
-	socklen_t sa_len;
-	int cfd, ret, e, n;
-	unsigned i, buffer_size;
-	uid_t uid;
-	uint8_t *buffer;
+	int ret, e;
+	unsigned i;
 	struct pin_st pins;
 	int sd;
 	sec_mod_st *sec;
 	void *sec_mod_pool;
-	fd_set rd_set;
-	pid_t pid;
-#ifdef HAVE_PSELECT
-	struct timespec ts;
-#else
-	struct timeval ts;
-#endif
-	sigset_t emptyset, blockset;
 
 #ifdef DEBUG_LEAKS
 	talloc_enable_leak_report_full();
 #endif
-	sigemptyset(&blockset);
-	sigemptyset(&emptyset);
-	sigaddset(&blockset, SIGALRM);
-	sigaddset(&blockset, SIGTERM);
-	sigaddset(&blockset, SIGINT);
-	sigaddset(&blockset, SIGHUP);
+	sm_loop = EV_DEFAULT;
+	if (sm_loop == NULL) {
+		seclog(sec, LOG_ERR, "could not initialize event loop");
+		exit(1);
+	}
 
 	sec_mod_pool = talloc_init("sec-mod");
 	if (sec_mod_pool == NULL) {
@@ -629,8 +708,6 @@ void sec_mod_server(void *main_pool, struct perm_cfg_st *perm_config, const char
 	}
 
 	memcpy(sec->cookie_key, cookie_key, COOKIE_KEY_SIZE);
-	sec->cookie_key_last_update = time(0);
-
 	sec->dcookie_key.data = sec->cookie_key;
 	sec->dcookie_key.size = COOKIE_KEY_SIZE;
 	sec->perm_config = talloc_steal(sec, perm_config);
@@ -647,11 +724,6 @@ void sec_mod_server(void *main_pool, struct perm_cfg_st *perm_config, const char
 
 	/* we no longer need the main pool after this point. */
 	talloc_free(main_pool);
-
-	ocsignal(SIGHUP, handle_sighup);
-	ocsignal(SIGINT, handle_sigterm);
-	ocsignal(SIGTERM, handle_sigterm);
-	ocsignal(SIGALRM, handle_alarm);
 
 	sec_auth_init(sec, perm_config);
 	sec->cmd_fd = cmd_fd;
@@ -755,101 +827,42 @@ void sec_mod_server(void *main_pool, struct perm_cfg_st *perm_config, const char
 		}
 	}
 
-	sigprocmask(SIG_BLOCK, &blockset, &sig_default_set);
-	alarm(MAINTAINANCE_TIME);
-	seclog(sec, LOG_INFO, "sec-mod initialized (socket: %s)", SOCKET_FILE);
+	ev_set_userdata (sm_loop, sec);
+	ev_set_syserr_cb(syserr_cb);
 
+	ev_init(&main_watcher, main_watcher_cb);
+	ev_io_set(&main_watcher, cmd_fd, EV_READ);
+	ev_io_set(&main_watcher, cmd_fd_sync, EV_READ);
 
-	for (;;) {
-		check_other_work(sec);
+	ev_init(&worker_watcher, worker_watcher_cb);
+	ev_io_set(&worker_watcher, sd, EV_READ);
 
-		FD_ZERO(&rd_set);
-		n = 0;
+	ev_init (&reload_sig_watcher, reload_sig_watcher_cb);
+	ev_signal_set (&reload_sig_watcher, SIGHUP);
+	ev_signal_start (sm_loop, &reload_sig_watcher);
 
-		FD_SET(cmd_fd, &rd_set);
-		n = MAX(n, cmd_fd);
+	ev_init (&term_sig_watcher, term_sig_watcher_cb);
+	ev_signal_set (&term_sig_watcher, SIGTERM);
+	ev_signal_set (&term_sig_watcher, SIGINT);
+	ev_signal_start (sm_loop, &term_sig_watcher);
 
-		FD_SET(cmd_fd_sync, &rd_set);
-		n = MAX(n, cmd_fd_sync);
+	ev_init(&maintainance_watcher, maintainance_watcher_cb);
+	ev_timer_set(&maintainance_watcher, MAINTAINANCE_TIME, MAINTAINANCE_TIME);
+	ev_timer_start(sm_loop, &maintainance_watcher);
 
-		FD_SET(sd, &rd_set);
-		n = MAX(n, sd);
+	ev_io_start (sm_loop, &main_watcher);
+	ev_io_start (sm_loop, &worker_watcher);
 
-#ifdef HAVE_PSELECT
-		ts.tv_nsec = 0;
-		ts.tv_sec = 120;
-		ret = pselect(n + 1, &rd_set, NULL, NULL, &ts, &emptyset);
-#else
-		ts.tv_usec = 0;
-		ts.tv_sec = 120;
-		sigprocmask(SIG_UNBLOCK, &blockset, NULL);
-		ret = select(n + 1, &rd_set, NULL, NULL, &ts);
-		sigprocmask(SIG_BLOCK, &blockset, NULL);
-#endif
-		if (ret == 0 || (ret == -1 && errno == EINTR))
-			continue;
+	/* sec-mod loop */
+	ev_run (sm_loop, 0);
 
-		if (ret < 0) {
-			e = errno;
-			seclog(sec, LOG_ERR, "Error in pselect(): %s",
-			       strerror(e));
-			exit(1);
-		}
-
-		/* we do a new allocation, to also use it as pool for the
-		 * parsers to use */
-		buffer_size = MAX_MSG_SIZE;
-		buffer = talloc_size(sec, buffer_size);
-		if (buffer == NULL) {
-			seclog(sec, LOG_ERR, "error in memory allocation");
-			exit(1);
-		}
-
-		if (FD_ISSET(cmd_fd_sync, &rd_set)) {
-			ret = serve_request_main(sec, cmd_fd_sync, buffer, buffer_size);
-			if (ret < 0 && ret == ERR_BAD_COMMAND) {
-				seclog(sec, LOG_ERR, "error processing sync command from main");
-				exit(1);
-			}
-		}
-
-		if (FD_ISSET(cmd_fd, &rd_set)) {
-			ret = serve_request_main(sec, cmd_fd, buffer, buffer_size);
-			if (ret < 0 && ret == ERR_BAD_COMMAND) {
-				seclog(sec, LOG_ERR, "error processing async command from main");
-				exit(1);
-			}
-		}
-		
-		if (FD_ISSET(sd, &rd_set)) {
-			sa_len = sizeof(sa);
-			cfd = accept(sd, (struct sockaddr *)&sa, &sa_len);
-			if (cfd == -1) {
-				e = errno;
-				if (e != EINTR) {
-					seclog(sec, LOG_DEBUG,
-					       "sec-mod error accepting connection: %s",
-					       strerror(e));
-					goto cont;
-				}
-			}
-			set_cloexec_flag (cfd, 1);
-
-			/* do not allow unauthorized processes to issue commands
-			 */
-			ret = check_upeer_id("sec-mod", sec->perm_config->debug, cfd, perm_config->uid, perm_config->gid, &uid, &pid);
-			if (ret < 0) {
-				seclog(sec, LOG_INFO, "rejected unauthorized connection");
-			} else {
-				memset(buffer, 0, buffer_size);
-				serve_request(sec, cfd, pid, buffer, buffer_size);
-			}
-			close(cfd);
-		}
- cont:
-		talloc_free(buffer);
-#ifdef DEBUG_LEAKS
-		talloc_report_full(sec, stderr);
-#endif
+	for (i = 0; i < sec->key_size; i++) {
+		gnutls_privkey_deinit(sec->key[i]);
 	}
+
+	sec_mod_client_db_deinit(sec);
+#ifdef DEBUG_LEAKS
+	talloc_report_full(sec, stderr);
+#endif
+	talloc_free(sec);
 }
