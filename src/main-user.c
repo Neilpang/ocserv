@@ -63,6 +63,8 @@ static void export_fw_info(main_server_st *s, struct proc_st* proc)
 	str_st str_common;
 	unsigned i, negate = 0;
 	int ret;
+	char tmpstr[MAX_IP_STR*2+1];
+	char *cidr = NULL;
 
 	str_init(&str4, proc);
 	str_init(&str6, proc);
@@ -70,6 +72,27 @@ static void export_fw_info(main_server_st *s, struct proc_st* proc)
 
 	/* We use different export strings for IPv4 and IPv6 to ease handling
 	 * with legacy software such as iptables and ip6tables. */
+
+	/* create our network CIDR */
+	if (s->config->network.ipv4_network && s->config->network.ipv4_netmask) {
+		snprintf(tmpstr, sizeof(tmpstr), "%s/%s", s->config->network.ipv4_network, s->config->network.ipv4_netmask);
+		cidr = ipv4_route_to_cidr(proc, tmpstr);
+		if (cidr) {
+			if (setenv("OCSERV_IPV4_POOL", cidr, 1) == -1) {
+				mslog(s, proc, LOG_ERR, "could not export routes\n");
+				exit(1);
+			}
+		}
+		talloc_free(cidr);
+	}
+
+	if (s->config->network.ipv6_network && s->config->network.ipv6_prefix > 0) {
+		snprintf(tmpstr, sizeof(tmpstr), "%s/%u", s->config->network.ipv6_network, s->config->network.ipv6_prefix);
+		if (setenv("OCSERV_IPV6_POOL", tmpstr, 1) == -1) {
+			mslog(s, proc, LOG_ERR, "could not export routes\n");
+			exit(1);
+		}
+	}
 
 	/* append custom routes to str */
 	for (i=0;i<proc->config->n_routes;i++) {

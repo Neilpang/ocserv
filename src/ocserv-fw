@@ -20,6 +20,8 @@
 
 # Input is from environment:
 #
+# OCSERV_IPV4_POOL: A CIDR with the IPv4 address pool (ipv4-network/prefix)
+# OCSERV_IPV6_POOL: A CIDR with the IPv6 address pool (ipv6-network/prefix)
 # OCSERV_RESTRICT_TO_ROUTES: If set to '1' the user should be restricted
 #                    to accessing the OCSERV_ROUTES and prevented from accessing
 #                    OCSERV_NO_ROUTES.
