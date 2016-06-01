@@ -49,6 +49,8 @@ struct plain_ctx_st {
 	unsigned groupnames_size;
 
 	const char *pass_msg;
+	unsigned pass_counter;
+
 	unsigned retries;
 	unsigned failed; /* non-zero if the username is wrong */
 };
@@ -246,6 +248,7 @@ static int plain_auth_init(void **ctx, void *pool, const common_auth_init_st *in
 		return ERR_AUTH_FAIL;
 
 	strlcpy(pctx->username, info->username, sizeof(pctx->username));
+	pctx->pass_counter = 0;
 	pctx->pass_msg = NULL; /* use default */
 
 	/* this doesn't fail on password mismatch but sets p->failed */
@@ -340,6 +343,7 @@ static int plain_auth_pass(void *ctx, const char *pass, unsigned pass_len)
 		if (pctx->cpass[0] != 0) { /* we just checked the password */
 			pctx->cpass[0] = 0;
 			pctx->pass_msg = pass_msg_otp;
+			pctx->pass_counter = 1;
 			return ERR_AUTH_CONTINUE;
 		}
 
@@ -367,9 +371,10 @@ static int plain_auth_msg(void *ctx, void *pool, passwd_msg_st *pst)
 
 	if (pctx->pass_msg)
 		pst->msg_str = talloc_strdup(pool, pctx->pass_msg);
-	pst->counter = 0; /* we support a single password */
 
-	/* use the default prompt */
+	/* differentiate between password prompts */
+	pst->counter = pctx->pass_counter;
+
 	return 0;
 }
 
