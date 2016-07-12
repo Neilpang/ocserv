@@ -7,6 +7,10 @@
 - ocserv: Do not hard fail when TUNSETGROUP ioctl fails with EINVAL. This
   allows ocserv to operate under older kernels.
 - ocserv: Corrected crash on worker process after client DTLS IP/port change.
+- ocserv: Better handling of clients which send their DTLS stream over
+  a different address than their CSTP stream. Their DTLS stream is now
+  detected in case their incoming port changes (e.g., due to a firewall
+  state timeout).
 
 
 * Version 0.11.3 (released 2016-06-16)
