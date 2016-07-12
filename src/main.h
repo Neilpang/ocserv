@@ -98,8 +98,12 @@ typedef struct proc_st {
 	struct ip_lease_st *ipv6;
 	unsigned leases_in_use; /* someone else got our IP leases */
 
-	struct sockaddr_storage remote_addr; /* peer address */
+	struct sockaddr_storage remote_addr; /* peer address (CSTP) */
 	socklen_t remote_addr_len;
+	/* It can happen that the peer's DTLS stream comes through a different
+	 * address. Most likely that's due to interception of the initial TLS/CSTP session */
+	struct sockaddr_storage dtls_remote_addr; /* peer address (DTLS) */
+	socklen_t dtls_remote_addr_len;
 	struct sockaddr_storage our_addr; /* our address */
 	socklen_t our_addr_len;
 

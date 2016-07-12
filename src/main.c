@@ -806,6 +806,13 @@ int sfd = -1;
 
 		if (match_ip_only != 0) {
 			msg.hello = 0; /* by default this is one */
+		} else {
+			/* a new DTLS session, store the DTLS IPs into proc and add it into hash table */
+			if (proc_to_send->dtls_remote_addr_len == 0) {
+				memcpy(&proc_to_send->dtls_remote_addr, &cli_addr, cli_addr_size);
+				proc_to_send->dtls_remote_addr_len = cli_addr_size;
+				proc_table_add_dtls_ip(s, proc_to_send);
+			}
 		}
 
 		msg.data.data = s->msg_buffer;

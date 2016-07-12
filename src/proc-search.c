@@ -48,6 +48,15 @@ const struct proc_st * proc = _p;
 		SA_IN_SIZE(proc->remote_addr_len), 0);
 }
 
+static size_t rehash_dtls_ip(const void* _p, void* unused)
+{
+const struct proc_st * proc = _p;
+
+	return hash_any(
+		SA_IN_P_GENERIC(&proc->dtls_remote_addr, proc->dtls_remote_addr_len),
+		SA_IN_SIZE(proc->dtls_remote_addr_len), 0);
+}
+
 static size_t rehash_dtls_id(const void* _p, void* unused)
 {
 const struct proc_st * proc = _p;
@@ -83,13 +92,18 @@ void proc_table_deinit(main_server_st *s)
 	talloc_free(s->proc_table.db_sid);
 }
 
+/* Adds the IP of the CSTP channel into the IPs hash table and
+ * the session ID into the IDs hash table.
+ */
 int proc_table_add(main_server_st *s, struct proc_st *proc)
 {
 	size_t ip_hash = rehash_ip(proc, NULL);
 	size_t dtls_id_hash = rehash_dtls_id(proc, NULL);
 
-	if (htable_add(s->proc_table.db_ip, ip_hash, proc) == 0) {
-		return -1;
+	if (proc->remote_addr_len > 0) {
+		if (htable_add(s->proc_table.db_ip, ip_hash, proc) == 0) {
+			return -1;
+		}
 	}
 
 	if (htable_add(s->proc_table.db_dtls_id, dtls_id_hash, proc) == 0) {
@@ -118,6 +132,7 @@ int proc_table_update_ip(main_server_st *s, struct proc_st *proc, struct sockadd
 	proc->remote_addr_len = addr_size;
 
 	ip_hash = rehash_ip(proc, NULL);
+
 	if (htable_add(s->proc_table.db_ip, ip_hash, proc) == 0) {
 		return -1;
 	}
@@ -125,8 +140,36 @@ int proc_table_update_ip(main_server_st *s, struct proc_st *proc, struct sockadd
 	return 0;
 }
 
+/* Adds the IP of the DTLS channel into the IPs hash table. It
+ * only adds the IP if it is different than the CSTP channel IP.
+ */
+int proc_table_add_dtls_ip(main_server_st *s, struct proc_st *proc)
+{
+	size_t ip_hash;
+
+	if (proc->dtls_remote_addr_len == 0)
+		return -1;
+
+	if (proc->dtls_remote_addr_len == proc->remote_addr_len &&
+	    memcmp(&proc->dtls_remote_addr, &proc->remote_addr, proc->remote_addr_len) == 0)
+		return -1; /* CSTP and DTLS peer addresses match, do nothing */
+
+	ip_hash = rehash_dtls_ip(proc, NULL);
+
+	if (htable_add(s->proc_table.db_ip, ip_hash, proc) == 0) {
+		return -1;
+	}
+
+	s->proc_table.total++;
+
+	return 0;
+}
+
 void proc_table_del(main_server_st *s, struct proc_st *proc)
 {
+	if (proc->dtls_remote_addr_len > 0)
+		htable_del(s->proc_table.db_ip, rehash_dtls_ip(proc, NULL), proc);
+
 	htable_del(s->proc_table.db_ip, rehash_ip(proc, NULL), proc);
 	htable_del(s->proc_table.db_dtls_id, rehash_dtls_id(proc, NULL), proc);
 	htable_del(s->proc_table.db_sid, rehash_sid(proc, NULL), proc);
@@ -137,9 +180,21 @@ static bool local_ip_cmp(const void* _c1, void* _c2)
 const struct proc_st* c1 = _c1;
 struct find_ip_st* c2 = _c2;
 
-	if (c1->remote_addr_len != c2->sockaddr_size)
+	if (c2->sockaddr_size == 0 ||
+	    (c1->remote_addr_len != c2->sockaddr_size &&
+	     c1->dtls_remote_addr_len != c2->sockaddr_size))
 		return 0;
 
+	/* Test if peer IP matches DTLS IP */
+	if (c1->dtls_remote_addr_len > 0 &&
+	    memcmp(SA_IN_P_GENERIC(&c1->dtls_remote_addr, c1->dtls_remote_addr_len),
+		   SA_IN_P_GENERIC(c2->sockaddr, c2->sockaddr_size),
+		   SA_IN_SIZE(c1->dtls_remote_addr_len)) == 0) {
+		c2->found_ips++;
+		return 1;
+	}
+
+	/* Test if peer IP matches CSTP IP */
 	if (memcmp(SA_IN_P_GENERIC(&c1->remote_addr, c1->remote_addr_len),
 		   SA_IN_P_GENERIC(c2->sockaddr, c2->sockaddr_size),
 		   SA_IN_SIZE(c1->remote_addr_len)) == 0) {
@@ -189,6 +244,7 @@ struct find_dtls_id_st* c2 = _c2;
 
 	return 0;
 }
+
 struct proc_st *proc_search_dtls_id(struct main_server_st *s,
 			        const uint8_t *id, unsigned id_size)
 {
@@ -213,6 +269,7 @@ struct find_sid_st* c2 = _c2;
 
 	return 0;
 }
+
 struct proc_st *proc_search_sid(struct main_server_st *s,
 			        const uint8_t sid[SID_SIZE])
 {
